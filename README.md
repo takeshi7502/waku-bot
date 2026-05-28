@@ -1,7 +1,7 @@
-<div align="center">
-<img src="https://t.me/i/userpic/320/kmuav2bot.jpg" alt="kmua" width="240">
+﻿<div align="center">
+<img src="https://t.me/i/userpic/320/wakuv2bot.jpg" alt="waku" width="240">
 
-# kmua bot
+# waku bot
 
 干啥啥不行，喵喵第一名
 </div>
@@ -10,9 +10,9 @@
 
 本项目随时可能会出现 breaking change, 更新前请查阅 commit history 并做好备份.
 
-## [文档](https://kmua.unv.app)
+## [文档](https://waku.unv.app)
 
-demo: [@kmuav2bot](https://t.me/kmuav2bot)
+demo: [@jinwakubot](https://t.me/jinwakubot)
 
 ## Contributors
 

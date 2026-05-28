@@ -1,4 +1,4 @@
-"""add affection histogram
+﻿"""add affection histogram
 
 Revision ID: a1b2c3d4e5f6
 Revises: d327932d860e
@@ -22,7 +22,7 @@ depends_on: str | Sequence[str] | None = None
 
 def affection_bucket(x: int) -> int:
     """
-    将好感度值映射到桶编号（与 kmua/database/affection.py 保持一致）
+    将好感度值映射到桶编号（与 waku/database/affection.py 保持一致）
     """
     if x < -200:
         return x // 50

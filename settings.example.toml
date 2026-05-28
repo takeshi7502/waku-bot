@@ -1,0 +1,58 @@
+﻿token = "YOUR_TELEGRAM_BOT_TOKEN"
+owners = [123456789]
+db_url = "sqlite+aiosqlite:///./data/waku.db"
+session_name = "waku"
+api_id = 123456
+api_hash = "YOUR_TELEGRAM_API_HASH"
+use_ipv6 = false
+log_retention_days = 30
+log_level = "INFO"
+lang = "vi-VN"
+
+redis = false
+redis_endpoint = "localhost"
+redis_port = 6379
+redis_db = 0
+redis_password = ""
+
+agent = true
+agent_model = "default/deepseek-v4-flash"
+agent_provider_url = "https://api.deepseek.com"
+agent_api_key = "YOUR_DEEPSEEK_API_KEY"
+agent_messages_threshold = 20
+agent_whitelist_mode = false
+agent_whitelist = []
+agent_prompt = ''''''
+
+# Provider configuration. Each named provider can specify:
+#   url      = base URL of the API endpoint
+#   key      = API key
+#   api_type = "chat_completions" (default, broadly compatible) or "responses" (OpenAI Responses API)
+#
+# Example:
+# [agent_providers.default]
+# url = "https://api.openai.com/v1"
+# key = "sk-..."
+# api_type = "chat_completions"
+
+[agent_providers.default]
+url = "https://api.deepseek.com"
+key = "YOUR_DEEPSEEK_API_KEY"
+type = "chat_completions"
+
+manyacg_api_url = "https://api.manyacg.top/v1"
+manyacg_api_key = ""
+manyacg_channel = "MoreACG"
+manyacg_bot = "kirakabot"
+manyacg_setu_cd = 1
+manyacg_hybrid_search = true
+
+# Infographic API https://github.com/krau/infographic-api
+# infographic = false
+# infographic_api_url = "http://localhost:3000"
+# infographic_api_key = ""
+
+# Periodic sticker / reaction: force the model to call the tool every N conversations.
+# Set to 0 to disable.
+# agent_periodic_sticker_interval = 5
+# agent_periodic_reaction_interval = 3

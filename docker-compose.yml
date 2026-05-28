@@ -1,16 +1,18 @@
 services:
-  kmua:
-    image: ghcr.io/krau/kmua-bot:v2
-    container_name: kmua-bot
+  waku:
+    build: .
+    image: waku-bot:latest
+    container_name: waku-bot
     restart: unless-stopped
     ports:
       - "8180:8180"  # Health check endpoint
     volumes:
-      - ./data:/kmua/data
-      - ./logs:/kmua/logs
-      - ./settings.toml:/kmua/settings.toml
+      - ./data:/waku/data
+      - ./logs:/waku/logs
+      - ./settings.toml:/waku/settings.toml
+      - ./waku:/waku/waku
     environment:
-      - TZ=Asia/Shanghai
+      - TZ=Asia/Ho_Chi_Minh
     network_mode: host
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8180/health"]

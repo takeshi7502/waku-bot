@@ -1,8 +1,8 @@
-site_name: kmua の小站
+﻿site_name: waku の小站
 site_author: Krau
-site_description: 关于 kmua 已知的情报
-repo_name: krau/kmua-bot
-repo_url: https://github.com/krau/kmua-bot
+site_description: 关于 waku 已知的情报
+repo_name: krau/waku-bot
+repo_url: https://github.com/krau/waku-bot
 copyright: CC BY-NC-SA 4.0
 theme:
   name: material

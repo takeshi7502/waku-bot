@@ -1,5 +1,5 @@
-FROM ghcr.io/astral-sh/uv:debian-slim
-WORKDIR /kmua
+﻿FROM ghcr.io/astral-sh/uv:debian-slim
+WORKDIR /waku
 COPY pyproject.toml uv.lock ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc g++ make build-essential git graphviz ca-certificates ffmpeg curl && \
@@ -12,4 +12,4 @@ COPY . .
 # Expose health check port
 EXPOSE 8180
 
-ENTRYPOINT ["uv", "run", "python", "-m", "kmua"]
+ENTRYPOINT ["uv", "run", "python", "-m", "waku"]

@@ -1,4 +1,4 @@
-name: Build and Publish Docker Image
+﻿name: Build and Publish Docker Image
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
       #       type=ref,event=branch
       #       type=sha
       #     labels: |
-      #       org.opencontainers.image.title=kmua-bot
+      #       org.opencontainers.image.title=waku-bot
       #       org.opencontainers.image.description=${{ github.event.head_commit.message }}
 
       - name: Set up Docker Buildx

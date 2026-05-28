@@ -1,0 +1,446 @@
+﻿bot:
+  msg:
+    lang_changed: Đã đổi ngôn ngữ sang {lang}
+    lang_select_private: "Chọn ngôn ngữ bạn muốn sử dụng:"
+    lang_select_group: "Chọn ngôn ngữ cho nhóm này:"
+    no_permission_group: Bạn không có quyền quản lý bot trong nhóm này!
+    group_config: Nhấn các nút bên dưới để thay đổi cài đặt nhóm!
+    unknown_operation: Thao tác không hợp lệ. Đừng nghịch linh tinh nhé!
+    group_config_saved: Đã lưu cài đặt nhóm~
+    refresh_failed: Làm mới thất bại, vui lòng thử lại sau.
+    refresh_success: Làm mới thành công!
+    refreshing_avatar: Đang làm mới avatar của bạn...
+    cleanning: waku đang dọn dẹp căn phòng...
+    sync_members_cd: Đừng dùng lệnh này quá thường xuyên! Vui lòng thử lại sau.
+    sync_members_done: Đồng bộ xong! Đã dọn {count} thành viên.
+    b23_converted: "{real_url}"
+    b23_converted_group: |
+      {real_url}
+      Link rút gọn b23 từ {from_user}, đã chuyển đổi giúp bạn!
+    title:
+      set_self: Được rồi, giờ bạn là {title}!
+      set_other: "{user} đã biến {target} thành {title}!"
+      set_permissions: Nhấn các nút bên dưới để đổi quyền được cấp bởi lệnh /t.
+      deleted: Danh hiệu của bạn đã được gỡ.
+      errors:
+        generic: Oops, thao tác không thành công.
+        admin_required: Mình không đủ quyền, hoặc đang cố đổi danh hiệu do admin khác đặt.
+        creator: Mình không thể dùng cái này với chủ nhóm đâu meow.
+        rank_invalid: Danh hiệu dài quá! Không vừa đâu!
+        user_id_invalid: Mình không thể đổi danh hiệu của chính mình hoặc danh tính kênh.
+        no_chat_or_user: Không tìm thấy người dùng hoặc nhóm...
+        right_forbidden: |
+          Các quyền được áp dụng không khả dụng trong nhóm này, vui lòng dùng lệnh /sett để chỉnh lại
+          (Ví dụ: quyền quản lý chủ đề chỉ có trong nhóm đã bật chủ đề)
+    ip:
+      no_ip_provided: "Vui lòng nhập IP/tên miền cần tra cứu."
+      querying: "Đang tra cứu: {ip}"
+      query_failed: "Tra cứu thất bại: {error_type}: {error}"
+      query_failed_reason: "Tra cứu thất bại: {message}"
+      query_target: "Mục tiêu tra cứu: <code>{url}</code>"
+      resolved_address: "Địa chỉ phân giải: <code>{query}</code>"
+      location: "Vị trí: <code>{country} - {region} - {city}</code>"
+      coordinates: "Tọa độ: <code>{lat},{lon}</code>"
+      isp: "Nhà mạng: <code>{isp}</code>"
+      organization: "Tổ chức: <code>{org}</code>"
+      as_number: '<a href="https://bgp.he.net/{as_link}">{as_number}</a>'
+      mobile_ip: "IP này có thể là <b>IP mạng di động</b>"
+      proxy_ip: "IP này có thể là <b>IP proxy</b>"
+      hosting_ip: "IP này có thể là <b>IP trung tâm dữ liệu/hosting</b>"
+    help: |
+      <blockquote expandable="true">
+      /start - Bắt đầu | Mở menu
+      /help - Hiển thị trợ giúp
+      /config - Cấu hình bot cho nhóm này
+      /waifu - Waifu hôm nay của nhóm!
+      /waifu_graph - Sơ đồ quan hệ waifu!
+      /q - Trích dẫn một tin nhắn
+      /d - Xóa trích dẫn | Quản lý trích dẫn nhóm
+      /qrand - Lấy trích dẫn ngẫu nhiên
+      /qp - Đặt xác suất gửi trích dẫn ngẫu nhiên
+      /t - Nhận danh hiệu | Trao danh hiệu
+      /td - Gỡ danh hiệu của bạn
+      /sett - Đổi quyền cho lệnh /t
+      /setu - Xin ảnh nóng xíu (/ω＼*)
+      /greet - Đặt tin nhắn chào mừng của nhóm
+      /id - Lấy ID chat
+      /ip - Tra cứu thông tin IP/tên miền
+      /wordcloud - Tạo word cloud từ lịch sử chat
+      /botpromote - Thăng cấp một người thành admin bot (có quyền gần như owner với bot)
+      /botdemote - Gỡ quyền admin bot
+      /syncmembers - Đồng bộ thành viên nhóm
+      /f5avatar - Làm mới avatar của bạn
+      /forget - Bảo bot quên lịch sử trò chuyện của bạn
+      /throwbottle - Ném một chai trôi dạt
+      /pickbottle - Nhặt một chai trôi dạt
+      /buygift - Mua quà
+      /gift - Tặng quà cho Bot
+      /lang - Đổi ngôn ngữ bot/ngôn ngữ nhóm
+      </blockquote>
+      Dùng "/" hoặc "\" lên người dùng khác để niệm phép với họ.
+    help_inline: |
+      Gõ @{me_username} trong bất kỳ chat nào để vào chế độ Inline.
+
+      Trong chế độ Inline, bạn có thể dùng các tham số sau:
+
+      q [từ khóa] - Tìm trích dẫn
+    reply:
+      default:
+        - Meow?
+    manyacg:
+      artwork_pictures_count: Tác phẩm này có {count} ảnh.
+      seefull: ->Nhấn để xem
+      chat_setu_disabled: Ở đây không cho ảnh nhạy cảm đâu!
+      setu_cd: Nhanh quá! Chưa được đâu!
+      setu_error: Thất bại rồi meow~ Vui lòng thử lại sau.
+    slash:
+      forward: "{actor} đã {action} {target}!"
+      reverse: "{actor} bị {target} {action}!"
+      self: "{actor} đã tự {action} mình!"
+      self_reverse: "{actor} đã tự bị {action}!"
+      forward_with_arg: "{actor} đã {action} {target} {extra}!"
+      reverse_with_arg: "{target} đã {action} {actor} {extra}!"
+      self_with_arg: "{actor} đã tự {action} mình {extra}!"
+    gift:
+      none_available: Hiện tại bạn chưa thể mua món quà nào.
+      buy_prompt: Bạn muốn mua gì nào?
+      leave: Rời đi
+      not_your_purchase: Đây không phải yêu cầu mua hàng của bạn.
+      user_not_found: Không tìm thấy dữ liệu người dùng.
+      not_enough_coins: Số dư của bạn không đủ để mua món quà này.
+      buy_success: "Đã mua thành công {rarity} {name} *1."
+      buy_again: "Bạn muốn mua thêm {name} không?\nViệc này sẽ tốn {percent}% số dư hiện tại của bạn."
+      buy_one_more: Mua thêm một cái
+      cancelled_no_gifts: "Đã hủy mua.\nHiện tại bạn chưa thể mua món quà nào."
+      cancelled_prompt: Đã hủy mua. Bạn muốn mua món khác không?
+      confirm_buy: "<b>{name}</b>\n<i>{description}</i>\n\nGhi chú hiệu ứng: {comment}\n\nBạn có chắc muốn mua {name} *1 không? Việc này sẽ tốn {percent}% số dư hiện tại của bạn."
+      confirm: Xác nhận
+      cancel: Thôi
+      unknown_operation: Thao tác không hợp lệ.
+      no_owned_gifts: Bạn chưa mua món quà nào.
+      send_prompt: Bạn muốn tặng gì cho mình? Nhấn nút số thứ tự để gửi quà.
+      no_more: Không còn nữa.
+      no_more_gifts: Không còn món quà nào nữa.
+      gift_not_found: Không tìm thấy món quà.
+      not_your_gift: Đây không phải quà của bạn.
+      already_sent: Món quà này đã được gửi rồi.
+      no_memory: Không có
+      memory_status: "Ký ức hiện tại về bạn:\n{memory}\n\nXếp hạng độ thân thiết: {rank:.2%}"
+      strange_gift: Mình nhận được một món quà kỳ lạ.
+      send_success: "Đã gửi thành công {rarity} {name} *1."
+      all_sent: Bạn đã gửi hết quà rồi.
+      send_more_prompt: Bạn muốn gửi thêm gì nữa? Hiệu ứng quà có thể không cộng dồn.
+    bottle:
+      no_content: Bỏ gì đó vào chai đi~
+      text_too_long: Dài quá! Chai không chứa nổi!
+      not_enough_coins: Bạn không còn chai nào để dùng.
+      not_enough_coins_to_pick: Bạn đứng chờ bên bờ rất lâu, nhưng biển chẳng gửi gì cả~
+      throw_success: Bạn đã ném chiếc chai này ra biển thành công 🌊🍾
+      throw_failed: Bạn cố ném chai ra biển, nhưng biển ném lại cho bạn một exception
+      no_bottles: Bạn tìm rất lâu bên bờ biển nhưng không thấy gì~
+      unsupported_media: Bạn tìm thấy một chiếc chai, nhưng không hiểu bên trong có gì
+      unsupported_media_throw: Biển không hiểu thứ bạn bỏ trong chai~
+      not_your_bottle: Chiếc chai này không phải của bạn!
+      throw_back_success: Bạn đã ném chiếc chai lại ra biển 🌊🍾
+      report_failed: Một con sóng tên "Exception" đã cuốn mất báo cáo của bạn
+      report_success: Biển cảm ơn sự cảnh giác của bạn~
+      destroy_failed: Phá hủy thất bại
+      destroy_success: Bạn đã phá hủy chiếc chai này
+      not_found: Không tìm thấy chiếc chai này
+      seek_result: Chiếc chai này được {sender} ném ra biển lúc {created_at}
+      pick_disabled_in_chat: Ở đây không cho nhặt chai
+      reply_prompt: Chọn cách bạn muốn trả lời
+      reply_waiting: Vui lòng trả lời trực tiếp vào tin nhắn chai này
+      reply_sent: Câu trả lời của bạn đã được gửi 💌
+      reply_failed: Gửi trả lời thất bại...
+      reply_received_anonymous: "Có người đã trả lời chai của bạn 💌\n\n{content}"
+      reply_received: "Có người đã trả lời chai của bạn 💌\n\nTừ: {sender}\n\n{content}"
+      reply_received_anonymous_header: Có người đã trả lời chai của bạn 💌
+      reply_received_header: "{sender} đã trả lời chai của bạn 💌"
+      reply_bottle_preview: "Chai của bạn:\n{preview}"
+      bottle_preview_media: "[Nội dung media]"
+      reply_cancelled: Đã hủy trả lời
+      no_reply_content: Nội dung trả lời không được để trống
+      reply_text_too_long: Câu trả lời dài quá!
+      bottle_destroyed: Đã phá hủy chai
+      bottle_kept: Đã thả chai trở lại biển
+      reply_too_fast: Bạn trả lời nhanh quá, chờ chút nhé~
+      reply_bottle_not_found: Chiếc chai này đã biến mất giữa biển rồi
+      reply_sender_not_found: Chủ của chiếc chai đã biến mất giữa biển rồi
+    greeting:
+      usage: |
+        Cách dùng: /greet <hành động> [tham số]
+        Hành động có sẵn: set, remove, show
+        - set <tin_nhắn_chào_mừng>:
+          Đặt tin nhắn chào mừng cho nhóm. Có thể dùng các biến:
+          ${user} - Tên người dùng của thành viên mới
+          ${chat} - Tên nhóm
+          Hỗ trợ HTML.
+        - remove:
+          Xóa tin nhắn chào mừng của nhóm.
+        - show:
+          Hiển thị tin nhắn chào mừng hiện tại của nhóm.
+      set_usage: |
+        Cách dùng: /greet set <tin_nhắn_chào_mừng>
+        Biến có sẵn:
+        ${user} - Tên người dùng của thành viên mới
+        ${chat} - Tên nhóm
+        Hỗ trợ HTML.
+      too_long: Dài quá! Không vừa đâu!
+      set_success: Đã đặt tin nhắn chào mừng!
+      remove_success: Đã xóa tin nhắn chào mừng.
+      not_set: Nhóm này chưa đặt tin nhắn chào mừng.
+      template_error: Lỗi khi phân tích mẫu tin nhắn chào mừng. Đừng chèn thứ kỳ lạ nhé.
+    botadmin:
+      invalid_user: |
+        Người dùng không hợp lệ. Vui lòng nhập ID người dùng hợp lệ hoặc reply một tin nhắn.
+        (Không thể đặt kênh, admin ẩn danh, v.v. làm admin bot. Cũng không thể dùng lệnh này với chính bạn!)
+      user_not_found: Không tìm thấy người dùng.
+      user_is_bot: Không thể dùng lệnh này với bot!
+      user_not_in_chat: Có vẻ người này không ở trong nhóm. Bảo họ nhắn gì đó thử nhé~
+      success: Đã đặt trạng thái admin bot của {user} trong nhóm này thành {status}.
+      target_is_upstream: Không thể dùng lệnh này với người này, vì quyền của bạn được họ cấp.
+      already_set: Trạng thái người dùng không thay đổi.
+    agent:
+      waiting: Đang chờ phản hồi, vui lòng đợi một chút...
+      forgot: Chuyện gì vừa xảy ra vậy? Hình như mình quên mất rồi...
+      summary_prompt: Tóm tắt cuộc trò chuyện.
+      errors:
+        model_http_400: Nội dung này nhạy cảm quá! Mình không làm được! (400)
+        model_http: Thất bại rồi meow~ Vui lòng thử lại sau (HTTP {code})
+        too_fast: Nhanh quá! Chưa được đâu!
+        interrupted: "Đầu ra đã bị ngắt ({error})"
+    wordcloud:
+      generating: Đang tạo rồi, vui lòng chờ một chút...
+      generated: Word cloud của lịch sử chat gần đây.
+    infographic:
+      usage: |
+        Cách dùng: /infographic <cú pháp infographic>
+        Hoặc reply một tin nhắn bằng /infographic
+        
+        Ví dụ:
+        <code>/infographic infographic list-row-simple-horizontal-arrow\ndata\n  title Product Roadmap\n  lists\n    - label Research\n      value 80</code>
+      cooldown: Nhanh quá! Vui lòng thử lại sau.
+      rendered: "Đã render! Thời gian: {time}ms"
+      timeout: Render quá thời gian, vui lòng thử lại sau.
+      error: "Render thất bại: {error}"
+    waifu:
+      disabled: Tính năng waifu không được phép dùng ở đây.
+      not_found: Hiện tại bạn chưa có waifu vì mình không tìm thấy thành viên nào khác trong dữ liệu.
+      retry: Bạn chưa nhận được waifu, thử lại nhé~
+      got: "{user}, hôm nay bạn đã nhận waifu rồi! {waifu} là waifu hôm nay của bạn!"
+      normal: "{user}, waifu hôm nay của bạn là {waifu}!"
+      got_nouser: "Hôm nay bạn đã nhận waifu rồi! {waifu} là waifu hôm nay của bạn!"
+      normal_nouser: "Waifu hôm nay của bạn là {waifu}!"
+      married: "{user}, bạn và {waifu} đã kết hôn rồi~"
+      remove_not_found: Không tìm thấy người dùng, có thể họ đã bị xóa.
+      remove: Bạn có chắc muốn xóa người này không?
+      removed: "Người dùng này đã bị xóa. Họ từng là waifu của {user}."
+      marry_not_real: ＞﹏＜ Đây không phải người dùng thật. (Không thể cưới admin ẩn danh, danh tính kênh, v.v.)
+      marry_self: (。・ω・。) Một ngày nào đó sẽ có người từ phương xa đến với bạn.
+      marry_not_user: (￣ε(#￣) Đừng xen vào chuyện của người khác nào.
+      already_married: Bạn đã kết hôn với người này rồi!
+      already_married_other: （＞人＜；）Người này đã ở bên người khác rồi. Chúc bạn tìm được người phù hợp.
+      user_already_married_other: ∑( 口 || Bạn đã có waifu rồi, đừng chạy theo người khác nữa!
+      marry_ask: "{waifu}, bạn có đồng ý cưới {user} không?"
+      marry_success: "Chúc mừng hôn lễ của {user} và {waifu}~"
+      marry_refused: "(´。＿。｀) Bạn đã từ chối lời cầu hôn. Có những người, lỡ mất rồi là mất mãi..."
+      marry_cancel: Bạn đã hủy lời cầu hôn.
+      no_participate: Chưa có ai trong nhóm nhận waifu hôm nay.
+      graph_caption: Sơ đồ quan hệ của nhóm, có {count} người tham gia.
+      divorce_not_married: Nhưng mà... bạn còn chưa kết hôn mà qwq
+      divorce_not_found: Không tìm thấy waifu của bạn!
+      divorce_success: <i>Mong một ngày nào đó bạn sẽ gặp lại người đặc biệt của mình.</i>
+      divorce_notify: "{user} đã kết thúc mối quan hệ với bạn QAQ..."
+      divorce_confirm: Bạn có chắc muốn ly hôn với {waifu} không?
+      info: |
+        Nhắc tên khi được chọn: {mention}
+        Đã kết hôn: {married}
+        ID waifu đã kết hôn: {married_waifu_id}
+    quote:
+      probability_usage: Xác suất gửi trích dẫn ngẫu nhiên phải là số thập phân nhỏ hơn 1. Đặt số âm để tắt lệnh /qrand.
+      probability_invalid: Đừng nhập thứ kỳ lạ nhé (//▲//)
+      reply_to_required: Vui lòng reply một tin nhắn.
+      topic_not_supported: Tính năng này không hỗ trợ ngoài chủ đề chính.
+      origin_not_found: Mình không biết ai đã gửi tin nhắn này...
+      get_link_failed: Lấy link tin nhắn thất bại. Có thể đây không phải supergroup.
+      already_exists: Trích dẫn này đã tồn tại!
+      text_not_available: Không thể tạo ảnh cho tin nhắn không phải văn bản hoặc tin nhắn quá dài.
+      chat_no_quote: Nhóm này chưa có trích dẫn nào.
+      not_found: Tin nhắn này không nằm trong trích dẫn của nhóm.
+      only_delete_self: Bạn chỉ có thể xóa trích dẫn của chính mình.
+      only_delete_or_group: Bạn chỉ có thể xóa trích dẫn của mình hoặc trích dẫn trong nhóm này.
+      deleted: Đã xóa trích dẫn.
+      created:
+        - Để xem ai đang nói mấy câu kỳ lạ nào!
+        - Xong rồi!
+      user_all_deleted: Hết trích dẫn rồi!
+      user_no_quote: Bạn chưa có trích dẫn nào.
+      page_invalid: Không còn trang nữa.
+      user_quote_list_head: |
+        Trích dẫn của bạn: tổng {count}, trang {page}/{max_page}
+        Nhấn một số để xóa trích dẫn tương ứng.
+      no_text: (không có văn bản)
+      invalid_link: Vui lòng nhập link tin nhắn hợp lệ cho trích dẫn.
+      only_delete_self_or_admin_in_group: Bạn chỉ có thể xóa trích dẫn của mình hoặc trích dẫn từ nhóm bạn quản lý.
+    loading:
+      - Thiếu nữ đang cầu nguyện...
+      - Đang sắp xếp lại các spline...
+      - Đang meow...
+      - Tri kỷ ở xa cũng khiến đất khách hóa gần.
+      - Đang vẽ ảnh nóng...
+      - Vui lòng chờ, tổng đài viên đang bận.
+      - Có thể mất một giây...
+      - Có thể mất hai giây...
+      - Có thể mất ba giây...
+      - Có thể mất vài thế kỷ...
+      - Đừng tắt máy tính.
+      - Đừng tắt điện thoại.
+      - Đang chui vào chăn...
+      - Đang ôm ấp...
+      - Zzzzz...
+      - Đang gửi ảnh nóng...
+      - Thiếu nữ đang AFK...
+      - Thiếu nữ đang roll gacha...
+      - Thiếu nữ đang cập nhật Steam...
+      - Thiếu nữ đang viết bug...
+      - Thiếu nữ đang sửa bug...
+      - Thiếu nữ đang ăn pizza...
+      - Thiếu nữ đang gặp bạn ngoài đời...
+      - Đang ôm...
+      - Đang dựa sát...
+      - Đang xoa đầu...
+      - Đang nhìn quả cầu tiên tri...
+      - Đang meow...
+      - Đang xem anime...
+      - Đang tải...
+      - Thiếu nữ đã bỏ nhà đi...
+      - Đang ngủ trưa...
+      - Đang thức khuya...
+      - Đang đạt ALL PERFECT...
+      - Đang đạt FULL COMBO...
+      - Đang tận hưởng làn gió...
+      - Đang làm dấu trái tim...
+      - Đang cosplay catgirl...
+      - Đang chơi Genshin...
+      - Đang tải như thể mạng sống phụ thuộc vào nó...
+      - Đang QAQ...
+      - Đang qwq...
+      - Đang ovo...
+      - Đang đọc kịch bản Bee Movie...
+      - Đang sụt sịt...
+      - Đang kiểm tra Patreon...
+      - Đang quay vòng quanh bạn...
+      - Đang tưới cây...
+  inline:
+    switch_pm_text: Tìm hiểu thêm
+    chat_quotes_title: Tìm trích dẫn của nhóm này
+    chat_quotes_description: Hoặc chỉ cần gõ q [từ khóa] để tìm các trích dẫn bạn có thể xem.
+    chat_quotes_quering: Đang lấy thông tin nhóm...
+    chat_quotes_button_noop: Thiếu nữ đang cầu nguyện...
+    chat_quotes_error: Phân tích thông tin nhóm thất bại...
+    chat_quotes_success: Nhấn nút bên dưới để tìm trích dẫn của nhóm này.
+    chat_quotes_button: 🔍
+    quotes_title: Tìm trích dẫn
+    quotes_description: Gõ q [từ khóa] để tìm các trích dẫn bạn có thể xem.
+    quotes_message: Nhấn nút bên dưới để tìm trích dẫn.
+    quotes_button: 🔍
+  cmd:
+    start: Một chạm meow|Gọi menu
+    waifu: Waifu hôm nay!
+    waifu_graph: Sơ đồ quan hệ waifu!
+    q: Trích dẫn một tin nhắn
+    d: Xóa trích dẫn
+    qrand: Trích dẫn ngẫu nhiên
+    qp: Đặt xác suất trích dẫn
+    t: Nhận danh hiệu|Trao danh hiệu
+    sett: Đặt quyền danh hiệu
+    id: Lấy ID chat
+    ip: Lấy thông tin IP
+    setu: Xin ảnh nóng
+    config: Đổi cài đặt nhóm
+    greet: Đặt tin nhắn chào mừng
+    help: Trợ giúp|Thêm tính năng
+    lang: Đổi ngôn ngữ
+    throwbottle: Ném một chai trôi dạt
+    pickbottle: Nhặt một chai trôi dạt
+    f5avatar: Làm mới avatar của bạn
+    forget: Xóa lịch sử trò chuyện AI
+    td: Gỡ danh hiệu của bạn
+    wordcloud: Tạo word cloud
+    syncmembers: Đồng bộ thành viên nhóm
+    botpromote: Cấp quyền admin bot
+    botdemote: Gỡ quyền admin bot
+    buygift: Mua quà
+    gift: Tặng quà cho bot
+    randmyavatar: Đổi avatar bot ngẫu nhiên
+    reload: Tải lại bot
+    infographic: Render infographic
+  button:
+    back: Quay lại
+    repo: Mã nguồn
+    docs: Tài liệu
+    user_data: Dữ liệu của tôi
+    user_quote: Quản lý trích dẫn
+    user_waifu: Quản lý waifu
+    start_noop: Meow meow meow
+    pm_me: Nhắn riêng cho tôi
+    page_prev: Trang trước
+    page_next: Trang sau
+    chat_config:
+      waifu: Waifu hằng ngày
+      delete_events: Xóa sự kiện
+      message_search: Tìm tin nhắn
+      quote_pin_message: Ghim tin nhắn trích dẫn
+      ai_reply: AI trả lời
+      ai_reply_other_bots_enabled: Trả lời bot khác
+      ai_comment: AI bình luận
+      setu_enabled: Ảnh nóng ngẫu nhiên
+      unpin_channel_pin_enabled: Bỏ ghim tin kênh
+      convert_b23_enabled: Chuyển đổi link b23
+      parse_artwork_enabled: Phân tích link artwork
+      pick_bottle_enabled: Nhặt chai
+      group_memory_enabled: Bộ nhớ nhóm
+      save: Lưu
+    waifu:
+      remove: Xóa (Admin)
+      marry: Cưới cô ấy!
+      remove_confirm: Xóa
+      remove_cancel: Hủy
+      agree_marry_waifu: Đồng ý!
+      refuse_marry_waifu: Không...
+      cancel_marry_waifu: Hủy (?)
+      divorce: Ly hôn
+      divorce_confirm: Ly hôn
+      divorce_cancel: Hủy
+      mention_enabled: Đừng @ tôi
+      mention_disabled: "@ tôi khi tôi được chọn"
+    title_permissions:
+      can_change_info: Đổi thông tin
+      can_delete_messages: Xóa tin nhắn
+      can_edit_messages: Sửa tin nhắn
+      can_restrict_members: Hạn chế thành viên
+      can_invite_users: Mời người dùng
+      can_promote_members: Thăng quyền thành viên
+      can_post_stories: Đăng story
+      can_edit_stories: Sửa story
+      can_delete_stories: Xóa story
+      can_manage_video_chats: Quản lý video chat
+      can_manage_topics: Quản lý chủ đề
+      can_pin_messages: Ghim tin nhắn
+    manyacg:
+      detail: Chi tiết
+      original: Bản gốc
+    bottle:
+      throw_back: Ném lại
+      destroy: Phá hủy chai
+      report: Báo cáo
+      seek: Truy nguồn
+      reply: Trả lời
+      reply_anonymous: Trả lời ẩn danh
+      reply_public: Trả lời công khai
+      cancel_reply: Hủy trả lời
+      destroy_bottle_after_reply: Phá hủy chai sau khi trả lời
+      keep_bottle_after_reply: Thả lại biển
+    agent:
+      clear_history: Xóa lịch sử

@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -6,7 +6,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
-from kmua.config import app_config
+from waku.config import app_config
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -19,7 +19,7 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-from kmua.database.models import Base
+from waku.database.models import Base
 
 target_metadata = Base.metadata
 

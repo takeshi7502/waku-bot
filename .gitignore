@@ -6,6 +6,7 @@ tmp/
 logs/
 .idea
 .vscode
+settings.toml
 settings.dev*
 data/**
 .secret*
