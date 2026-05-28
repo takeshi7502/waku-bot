@@ -11,6 +11,9 @@ on:
       - "settings.toml"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   update-contributors:
     name: Update Contributors List
