@@ -1,4 +1,4 @@
-﻿token = "YOUR_TELEGRAM_BOT_TOKEN"
+token = "YOUR_TELEGRAM_BOT_TOKEN"
 owners = [123456789]
 db_url = "sqlite+aiosqlite:///./data/waku.db"
 session_name = "waku"

@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "waku-bot"
 version = "2.9.0"
 description = "A Telegram Bot"
