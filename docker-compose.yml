@@ -1,7 +1,6 @@
 services:
   waku:
-    build: .
-    image: waku-bot:latest
+    image: ghcr.io/takeshi7502/waku-bot:v2
     container_name: waku-bot
     restart: unless-stopped
     ports:
@@ -10,7 +9,6 @@ services:
       - ./data:/waku/data
       - ./logs:/waku/logs
       - ./settings.toml:/waku/settings.toml
-      - ./waku:/waku/waku
     environment:
       - TZ=Asia/Ho_Chi_Minh
     network_mode: host
