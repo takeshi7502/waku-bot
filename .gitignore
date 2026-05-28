@@ -4,6 +4,7 @@ __pycache__
 *.log
 tmp/
 logs/
+pgdata/
 .idea
 .vscode
 settings.toml

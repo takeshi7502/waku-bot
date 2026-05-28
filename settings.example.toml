@@ -8,6 +8,7 @@ use_ipv6 = false
 log_retention_days = 30
 log_level = "INFO"
 lang = "vi-VN"
+health_check_enabled = true
 
 redis = false
 redis_endpoint = "localhost"
@@ -25,8 +26,8 @@ agent_whitelist = []
 agent_prompt = ''''''
 
 # Provider configuration. Each named provider can specify:
-#   url      = base URL of the API endpoint
-#   key      = API key
+#   url     = base URL of the API endpoint
+#   key     = API key
 #   api_type = "chat_completions" (default, broadly compatible) or "responses" (OpenAI Responses API)
 #
 # Example:
@@ -34,6 +35,11 @@ agent_prompt = ''''''
 # url = "https://api.openai.com/v1"
 # key = "sk-..."
 # api_type = "chat_completions"
+#
+# [agent_providers.openai_native]
+# url = "https://api.openai.com/v1"
+# key = "sk-..."
+# api_type = "responses"
 
 [agent_providers.default]
 url = "https://api.deepseek.com"

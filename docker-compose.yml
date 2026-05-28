@@ -18,3 +18,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s  # Allow time for bot to start and connect
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:15-alpine
+    container_name: waku-db
+    restart: always
+    environment:
+      POSTGRES_USER: waku
+      POSTGRES_PASSWORD: wakupassword
+      POSTGRES_DB: wakudb
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waku -d wakudb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
