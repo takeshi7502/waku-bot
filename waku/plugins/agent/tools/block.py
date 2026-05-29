@@ -42,12 +42,12 @@ async def _can_request_moderation_action(
     chat_id = ctx.deps.chat_id
 
     try:
-        db_user = await database.get_user_by_id(user_id)
-        if db_user is not None and db_user.is_bot_global_admin:
-            return True
-
         association = await database.get_association(user_id, chat_id)
         if association is not None and association.is_bot_admin:
+            return True
+
+        db_user = await database.get_user_by_id(user_id)
+        if db_user is not None and db_user.is_bot_global_admin:
             return True
 
         return await common.can_user_manage_bot_in_chat(user_id, chat_id)
@@ -59,8 +59,66 @@ async def _can_request_moderation_action(
         return False
 
 
+async def _is_hidden_protected_entity(user_id: int, chat_id: int) -> bool:
+    """Return whether the target has hidden bot-management protection.
+
+    The result is intentionally used only for protection and never exposed as an
+    identity/role detail to the model or chat.
+    """
+    try:
+        association = await database.get_association(user_id, chat_id)
+        if association is not None and association.is_bot_admin:
+            return True
+
+        db_user = await database.get_user_by_id(user_id)
+        return bool(db_user is not None and db_user.is_bot_global_admin)
+    except Exception as e:
+        logger.warning(
+            f"Failed to verify protected target {user_id} in chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+        return False
+
+
+_SELF_MODERATION_ACTIONS = {"ban", "kick", "mute"}
+_SELF_MANAGEMENT_ACTIONS = _SELF_MODERATION_ACTIONS | {"set tag", "clear tag"}
+_MAX_MEMBER_TAG_LENGTH = 16
+_SELF_TARGET_ALIASES = {
+    "self",
+    "me",
+    "myself",
+    "toi",
+    "tôi",
+    "tao",
+    "t",
+    "tui",
+    "minh",
+    "mình",
+    "to",
+    "tớ",
+    "ban than",
+    "bản thân",
+    "chính mình",
+    "chinh minh",
+}
+
+
+def _is_self_moderation_request(
+    ctx: RunContext[datatype.ContextDeps], user_id: int | None, action: str
+) -> bool:
+    """Return whether this action is a user asking to moderate themselves."""
+    return action in _SELF_MODERATION_ACTIONS and user_id == ctx.deps.user_id
+
+
+def _is_self_management_request(
+    ctx: RunContext[datatype.ContextDeps], user_id: int | None, action: str
+) -> bool:
+    """Return whether this action is a user asking to manage themselves."""
+    return action in _SELF_MANAGEMENT_ACTIONS and user_id == ctx.deps.user_id
+
+
 async def _ensure_group_management_allowed(
-    ctx: RunContext[datatype.ContextDeps], action: str
+    ctx: RunContext[datatype.ContextDeps], action: str, target_user_id: int | None = None
 ) -> str | None:
     """Return a refusal reason when an AI group-management action is not allowed."""
     chat_id = ctx.deps.chat_id
@@ -70,19 +128,26 @@ async def _ensure_group_management_allowed(
     chat_config = await database.get_chat_config(chat_id)
     if not chat_config.agent_group_manage_enabled:
         return "AI group management is disabled for this group. Ask a group manager to enable it in /config first."
+    if _is_self_management_request(ctx, target_user_id, action):
+        return None
     if not await _can_request_moderation_action(ctx):
-        return f"Only group admins or bot admins can ask me to {action} users."
+        return f"Only group admins or bot admins can ask me to {action} other users."
     return None
 
 
 async def _get_checked_target_member(
-    ctx: RunContext[datatype.ContextDeps], user_id: int, action: str
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int,
+    action: str,
+    allow_requester: bool = False,
 ):
     """Get and validate a moderation target that must be an active non-admin member."""
     chat_id = ctx.deps.chat_id
     me = await ctx.deps.client.get_me()
-    if user_id in (ctx.deps.user_id, me.id):
-        return None, f"Refusing to {action} myself or the user currently talking to me."
+    if user_id == me.id:
+        return None, f"Refusing to {action} myself."
+    if user_id == ctx.deps.user_id and not allow_requester:
+        return None, f"Refusing to {action} the user currently talking to me."
 
     try:
         member = await common.get_chat_member(ctx.deps.client, chat_id, user_id)
@@ -92,6 +157,8 @@ async def _get_checked_target_member(
 
     if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
         return None, f"User {user_id} is not an active member of this group."
+    if await _is_hidden_protected_entity(user_id, chat_id):
+        return None, f"Đây là thực thể bí ẩn, không thể {action}."
     if member.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
         return None, f"Refusing to {action} a group owner or administrator."
     return member, None
@@ -163,6 +230,10 @@ async def _resolve_moderation_target(
     if user_id is not None:
         return user_id, None
 
+    normalized_target = target.casefold().strip(" \t\r\n\"'`.,!?;:()[]{}")
+    if normalized_target in _SELF_TARGET_ALIASES:
+        return ctx.deps.user_id, None
+
     if match := _TG_USER_ID_RE.search(target):
         return int(match.group(1)), None
     if match := _USER_ID_RE.search(target):
@@ -202,7 +273,14 @@ async def _resolve_checked_target_member(
     resolved_user_id, refusal = await _resolve_moderation_target(ctx, user_id, target)
     if refusal or resolved_user_id is None:
         return None, None, refusal
-    member, refusal = await _get_checked_target_member(ctx, resolved_user_id, action)
+    if refusal := await _ensure_group_management_allowed(ctx, action, resolved_user_id):
+        return resolved_user_id, None, refusal
+    member, refusal = await _get_checked_target_member(
+        ctx,
+        resolved_user_id,
+        action,
+        allow_requester=_is_self_moderation_request(ctx, resolved_user_id, action),
+    )
     return resolved_user_id, member, refusal
 
 
@@ -287,11 +365,9 @@ async def ban_user(
 
     Args:
         user_id: Telegram user ID when known.
-        target: Optional @username, tg://user link, numeric ID, or display name. If omitted while replying to a user's message, the replied user is used.
+        target: Optional @username, tg://user link, numeric ID, display name, or "me" for a user's self-ban request. If omitted while replying to a user's message, the replied user is used.
         reason: Brief reason for banning this user. Do not guess the target when unsure.
     """
-    if refusal := await _ensure_group_management_allowed(ctx, "ban"):
-        return refusal
     user_id, _, refusal = await _resolve_checked_target_member(ctx, user_id, target, "ban")
     if refusal or user_id is None:
         return refusal
@@ -321,11 +397,9 @@ async def kick_user(
 
     Args:
         user_id: Telegram user ID when known.
-        target: Optional @username, tg://user link, numeric ID, or display name. If omitted while replying to a user's message, the replied user is used.
+        target: Optional @username, tg://user link, numeric ID, display name, or "me" for a user's self-kick request. If omitted while replying to a user's message, the replied user is used.
         reason: Brief reason for kicking this user. Do not guess the target when unsure.
     """
-    if refusal := await _ensure_group_management_allowed(ctx, "kick"):
-        return refusal
     user_id, _, refusal = await _resolve_checked_target_member(ctx, user_id, target, "kick")
     if refusal or user_id is None:
         return refusal
@@ -357,12 +431,10 @@ async def mute_user(
 
     Args:
         user_id: Telegram user ID when known.
-        target: Optional @username, tg://user link, numeric ID, or display name. If omitted while replying to a user's message, the replied user is used.
+        target: Optional @username, tg://user link, numeric ID, display name, or "me" for a user's self-mute request. If omitted while replying to a user's message, the replied user is used.
         duration_minutes: Mute duration in minutes.
         reason: Brief reason for muting this user. Do not guess the target when unsure.
     """
-    if refusal := await _ensure_group_management_allowed(ctx, "mute"):
-        return refusal
     user_id, _, refusal = await _resolve_checked_target_member(ctx, user_id, target, "mute")
     if refusal or user_id is None:
         return refusal
@@ -465,6 +537,128 @@ async def unmute_user(
         f"Agent unmuted user {user_id} in chat {chat_id}; requested by {ctx.deps.user_id}; reason: {reason!r}"
     )
     return f"User {user_id} has been unmuted in this group."
+
+
+def _validate_member_tag(tag: str) -> str | None:
+    """Return an error message when a Telegram member tag is invalid."""
+    if not tag or not tag.strip():
+        return "Member tag cannot be empty."
+    if "\n" in tag or "\r" in tag:
+        return "Member tag must be a single line."
+    if len(tag) > _MAX_MEMBER_TAG_LENGTH:
+        return f"Member tag is too long. Use {_MAX_MEMBER_TAG_LENGTH} characters or fewer."
+    return None
+
+
+async def _resolve_tag_target(
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int | None,
+    target: str,
+    action: str,
+):
+    """Resolve and authorize a member tag target."""
+    if user_id is None and not target.strip():
+        user_id = ctx.deps.user_id
+
+    resolved_user_id, refusal = await _resolve_moderation_target(ctx, user_id, target)
+    if refusal or resolved_user_id is None:
+        return None, None, refusal
+
+    if refusal := await _ensure_group_management_allowed(ctx, action, resolved_user_id):
+        return resolved_user_id, None, refusal
+
+    allow_requester = _is_self_management_request(ctx, resolved_user_id, action)
+    member, refusal = await _get_checked_target_member(
+        ctx,
+        resolved_user_id,
+        action,
+        allow_requester=allow_requester,
+    )
+    return resolved_user_id, member, refusal
+
+
+async def set_member_tag(
+    ctx: RunContext[datatype.ContextDeps],
+    tag: str,
+    user_id: int | None = None,
+    target: str = "",
+) -> str:
+    """Set or change a Telegram member tag/custom title in the current group.
+
+    Args:
+        tag: The new member tag. Keep it short, single-line, and at most 16 characters.
+        user_id: Telegram user ID when known.
+        target: Optional @username, tg://user link, numeric ID, display name, reply target, or "me". If omitted, the requester is used.
+
+    Normal users may only change their own tag. Group admins and bot admins may
+    change other users' tags. The bot must have Telegram's can_manage_tags
+    permission ("Sửa thẻ thành viên").
+    """
+    tag = tag.strip()
+    if refusal := _validate_member_tag(tag):
+        return refusal
+
+    user_id, _, refusal = await _resolve_tag_target(ctx, user_id, target, "set tag")
+    if refusal or user_id is None:
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    try:
+        await ctx.deps.client.set_chat_member_tag(chat_id, user_id, tag=tag)
+    except RPCError as e:
+        logger.warning(
+            f"Failed to set member tag for user {user_id} in chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+        return (
+            f"Failed to set member tag for user {user_id}: {e.__class__.__name__}. "
+            "The bot may lack the Sửa thẻ thành viên / can_manage_tags permission."
+        )
+
+    logger.warning(
+        f"Agent set member tag for user {user_id} in chat {chat_id}; "
+        f"requested by {ctx.deps.user_id}; tag: {tag!r}"
+    )
+    return f"Member tag for user {user_id} has been set to {tag!r}."
+
+
+async def clear_member_tag(
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int | None = None,
+    target: str = "",
+) -> str:
+    """Clear a Telegram member tag/custom title in the current group.
+
+    Args:
+        user_id: Telegram user ID when known.
+        target: Optional @username, tg://user link, numeric ID, display name, reply target, or "me". If omitted, the requester is used.
+
+    Normal users may only clear their own tag. Group admins and bot admins may
+    clear other users' tags. The bot must have Telegram's can_manage_tags
+    permission ("Sửa thẻ thành viên").
+    """
+    user_id, _, refusal = await _resolve_tag_target(ctx, user_id, target, "clear tag")
+    if refusal or user_id is None:
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    try:
+        await ctx.deps.client.set_chat_member_tag(chat_id, user_id, tag=None)
+    except RPCError as e:
+        logger.warning(
+            f"Failed to clear member tag for user {user_id} in chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+        return (
+            f"Failed to clear member tag for user {user_id}: {e.__class__.__name__}. "
+            "The bot may lack the Sửa thẻ thành viên / can_manage_tags permission."
+        )
+
+    logger.warning(
+        f"Agent cleared member tag for user {user_id} in chat {chat_id}; "
+        f"requested by {ctx.deps.user_id}"
+    )
+    return f"Member tag for user {user_id} has been cleared."
 
 
 async def is_user_blocked(user_id: int) -> bool:

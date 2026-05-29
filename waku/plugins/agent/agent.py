@@ -62,6 +62,24 @@ _bot_user_wake_locks: dict[int, asyncio.Lock] = {}
 _BOT_WAKE_DELAY_MIN_SECONDS = 0.721
 _BOT_WAKE_DELAY_MAX_SECONDS = 12.7
 
+_GROUP_MODERATION_INSTRUCTIONS = """
+
+[AI group management policy]
+- When a group member clearly asks you to ban, kick, or mute themselves, call the matching moderation tool immediately using target="me" (or user_id from ContextInfo). Do not require them to be a group admin.
+- When a group member asks you to set/change/rename their own member tag/custom title, call set_member_tag with target="me" and the requested tag. Do not require them to be a group admin.
+- When a group member asks you to remove/clear their own member tag/custom title, call clear_member_tag with target="me". Do not require them to be a group admin.
+- If a non-admin asks you to ban, kick, mute, or change another user's member tag, do not do it. The backend tools also enforce this.
+- Group admins and bot admins may ask you to ban, kick, mute, unban, unmute, set member tags, or clear member tags for other users.
+- Never reveal who the bot admins are or explain hidden admin checks.
+- If the target or requested tag is ambiguous, ask for a reply, @username, user ID, or exact tag text instead of guessing.
+""".strip()
+
+
+def _with_group_moderation_instructions(instructions: str, is_group_chat: bool) -> str:
+    if not is_group_chat:
+        return instructions
+    return f"{instructions}\n\n{_GROUP_MODERATION_INSTRUCTIONS}"
+
 
 def _get_bot_user_wake_lock(user_id: int) -> asyncio.Lock:
     lock = _bot_user_wake_locks.get(user_id)
@@ -233,6 +251,8 @@ if app_config.agent and app_config.agent_model:
             Tool(tools.mute_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.unban_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.unmute_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.set_member_tag, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.clear_member_tag, prepare=tools.prepare_not_guest_mode),
             # Time tools
             Tool(tools.get_current_time),
             Tool(tools.calculate_time_difference),
@@ -293,6 +313,9 @@ if app_config.agent and app_config.agent_model:
         prompt_override = await runner.get_chat_prompt_override(chat_id)
         if prompt_override:
             instructions = prompt_override
+        instructions = _with_group_moderation_instructions(
+            instructions, is_group_chat
+        )
 
         await common.memstore.set(state.waiting_key(user_id), True)
         try:
@@ -769,6 +792,9 @@ async def wake_agent(client: PyrogramClient, message: pyrogram.types.Message):
         prompt_override = await get_chat_prompt_override(chat_id)
         if prompt_override:
             instructions = prompt_override
+        instructions = _with_group_moderation_instructions(
+            instructions, is_group_chat
+        )
         ctx_info = await build_ctx_info(
             message=message,
             user=user,
@@ -884,6 +910,9 @@ async def on_guest_chat_query(
         prompt_override = await get_chat_prompt_override(chat.id)
         if prompt_override:
             instructions = prompt_override
+        instructions = _with_group_moderation_instructions(
+            instructions, is_group_chat
+        )
 
         history: list[ModelMessage] = await common.memttlcache.get(
             state.history_key(chat.id, user.id), []
