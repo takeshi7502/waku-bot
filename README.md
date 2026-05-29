@@ -42,6 +42,13 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/Tam97123">
+                    <img src="https://avatars.githubusercontent.com/u/219667310?v=4" width="100;" alt="Tam97123"/>
+                    <br />
+                    <sub><b>Tam97123</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/NyanWhite">
                     <img src="https://avatars.githubusercontent.com/u/51278093?v=4" width="100;" alt="NyanWhite"/>
                     <br />
@@ -55,6 +62,8 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                     <sub><b>去年夏天</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/ames0k0">
                     <img src="https://avatars.githubusercontent.com/u/26835631?v=4" width="100;" alt="ames0k0"/>
@@ -62,8 +71,6 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                     <sub><b>YóUnǎi</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/ImgBotApp">
                     <img src="https://avatars.githubusercontent.com/u/31427850?v=4" width="100;" alt="ImgBotApp"/>
@@ -90,13 +97,6 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                     <img src="https://avatars.githubusercontent.com/u/24487646?v=4" width="100;" alt="ricky8955555"/>
                     <br />
                     <sub><b>Phrinky</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/Tam97123">
-                    <img src="https://avatars.githubusercontent.com/u/219667310?v=4" width="100;" alt="Tam97123"/>
-                    <br />
-                    <sub><b>Tam97123</b></sub>
                 </a>
             </td>
             <td align="center">
