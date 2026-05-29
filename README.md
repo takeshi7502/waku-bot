@@ -35,6 +35,13 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/takeshi7502">
+                    <img src="https://avatars.githubusercontent.com/u/107123061?v=4" width="100;" alt="takeshi7502"/>
+                    <br />
+                    <sub><b>Takeshi</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/NyanWhite">
                     <img src="https://avatars.githubusercontent.com/u/51278093?v=4" width="100;" alt="NyanWhite"/>
                     <br />
@@ -55,6 +62,8 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                     <sub><b>YóUnǎi</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/ImgBotApp">
                     <img src="https://avatars.githubusercontent.com/u/31427850?v=4" width="100;" alt="ImgBotApp"/>
@@ -62,8 +71,6 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                     <sub><b>Imgbot</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/real-LiHua">
                     <img src="https://avatars.githubusercontent.com/u/65490624?v=4" width="100;" alt="real-LiHua"/>
@@ -86,12 +93,21 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/Tam97123">
+                    <img src="https://avatars.githubusercontent.com/u/219667310?v=4" width="100;" alt="Tam97123"/>
+                    <br />
+                    <sub><b>Tam97123</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/leafmoes">
                     <img src="https://avatars.githubusercontent.com/u/44945631?v=4" width="100;" alt="leafmoes"/>
                     <br />
                     <sub><b>leafmoes</b></sub>
                 </a>
             </td>
+		</tr>
+		<tr>
             <td align="center">
                 <a href="https://github.com/AHCorn">
                     <img src="https://avatars.githubusercontent.com/u/42889600?v=4" width="100;" alt="AHCorn"/>
