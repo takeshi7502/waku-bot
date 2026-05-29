@@ -1,4 +1,4 @@
-﻿"""Layered message history compression for pydantic-ai agents.
+"""Layered message history compression for pydantic-ai agents.
 
 This module implements a three-layer compression strategy that preserves
 conversation structure while managing token usage:
@@ -177,6 +177,22 @@ def validate_tool_pairs(messages: Sequence[ModelMessage]) -> bool:
         if returns.get(call_id, 0) < count:
             return False
     return True
+
+
+def filter_empty_model_responses(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Remove assistant responses that have neither content nor tool calls.
+
+    Some OpenAI-compatible providers reject historical assistant messages when
+    `content` and `tool_calls` would both be empty. Pydantic-ai can preserve such
+    empty responses after interrupted/aborted turns, so we strip them before a
+    future request is sent to the provider.
+    """
+    result: list[ModelMessage] = []
+    for msg in messages:
+        if isinstance(msg, ModelResponse) and not msg.parts:
+            continue
+        result.append(msg)
+    return result
 
 
 def find_safe_split_index(
@@ -681,8 +697,10 @@ class HistoryCompressor:
                     compressed, self.config.multimodal_max_items
                 )
 
-            # Final safety check: ensure tool pairs are still valid
+            # Final safety check: ensure tool pairs are still valid and no empty
+            # assistant responses are sent to OpenAI-compatible providers.
             compressed = filter_incomplete_tool_pairs(compressed)
+            compressed = filter_empty_model_responses(compressed)
 
             return CompressionResult(
                 messages=compressed,
@@ -838,7 +856,7 @@ def create_history_processor(
                 f"History compressed: {result.original_count} -> "
                 f"{result.compressed_count} messages ({result.reason})"
             )
-        return result.messages
+        return filter_empty_model_responses(result.messages)
 
     return history_processor
 
