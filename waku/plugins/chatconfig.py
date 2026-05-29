@@ -1,4 +1,4 @@
-﻿import pyrogram
+import pyrogram
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from waku import common, database
@@ -81,6 +81,12 @@ class ChatConfigMarkup:
                         f"{i18n.t('bot.button.chat_config.ai_reply_other_bots_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.ai_reply_other_bots_enabled)}",
                         callback_data=self.get_callback_data(
                             "ai_reply_other_bots_enabled"
+                        ),
+                    ),
+                    InlineKeyboardButton(
+                        f"{i18n.t('bot.button.chat_config.agent_group_manage_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.agent_group_manage_enabled)}",
+                        callback_data=self.get_callback_data(
+                            "agent_group_manage_enabled"
                         ),
                     ),
                 ],
@@ -169,6 +175,10 @@ async def config_chat(
             case "ai_reply_other_bots_enabled":
                 chat_config.ai_reply_other_bots_enabled = (
                     not chat_config.ai_reply_other_bots_enabled
+                )
+            case "agent_group_manage_enabled":
+                chat_config.agent_group_manage_enabled = (
+                    not chat_config.agent_group_manage_enabled
                 )
             case _:
                 await callback_query.answer(

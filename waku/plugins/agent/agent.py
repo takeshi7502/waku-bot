@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import random
 
 import pyrogram
@@ -228,6 +228,11 @@ if app_config.agent and app_config.agent_model:
                 sequential=True,
             ),
             Tool(tools.block_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.ban_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.kick_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.mute_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.unban_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.unmute_user, prepare=tools.prepare_not_guest_mode),
             # Time tools
             Tool(tools.get_current_time),
             Tool(tools.calculate_time_difference),

@@ -1,4 +1,4 @@
-﻿bot:
+bot:
   msg:
     lang_changed: Đã đổi ngôn ngữ sang {lang}
     lang_select_private: "Chọn ngôn ngữ bạn muốn sử dụng:"
@@ -401,6 +401,9 @@
       parse_artwork_enabled: Phân tích link artwork
       pick_bottle_enabled: Nhặt chai
       group_memory_enabled: Bộ nhớ nhóm
+      agent_group_manage_enabled: AI quản lý nhóm
+      agent_ban_users_enabled: Cho phép AI ban user
+      agent_mute_users_enabled: Cho phép AI mute user
       save: Lưu
     waifu:
       remove: Xóa (Admin)

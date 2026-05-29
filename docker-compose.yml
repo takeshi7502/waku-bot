@@ -1,6 +1,7 @@
 services:
   waku:
-    image: ghcr.io/takeshi7502/waku-bot:v2
+    # image: ghcr.io/takeshi7502/waku-bot:v2
+    build: .
     container_name: waku-bot
     restart: unless-stopped
     ports:

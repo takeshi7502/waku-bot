@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import html
 from dataclasses import dataclass
 

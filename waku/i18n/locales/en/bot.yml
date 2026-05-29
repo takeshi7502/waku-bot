@@ -1,4 +1,4 @@
-﻿bot:
+bot:
   msg:
     lang_changed: Language changed to {lang}
     no_permission_group: You don't have permission to manage the bot in this group!
@@ -343,6 +343,9 @@
       parse_artwork_enabled: Parse Artwork Links
       pick_bottle_enabled: Pick Bottle
       group_memory_enabled: Group Memory
+      agent_group_manage_enabled: AI Group Management
+      agent_ban_users_enabled: Allow AI to Ban Users
+      agent_mute_users_enabled: Allow AI to Mute Users
       save: Save
     waifu:
       remove: Remove (Admin)

@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import mimetypes
 from datetime import datetime
 from io import BytesIO
@@ -597,6 +597,14 @@ async def build_ctx_info(
         reply_to = message.reply_to_message
         ctx_info.reply_to_msg_id = reply_to.id
         ctx_info.reply_to_msg_text = reply_to.text or reply_to.caption
+        reply_sender = reply_to.sender_chat or reply_to.from_user
+        if reply_sender and reply_sender.id:
+            ctx_info.reply_to_user_id = reply_sender.id
+            ctx_info.reply_to_user_name = (
+                getattr(reply_sender, "first_name", None)
+                or getattr(reply_sender, "title", None)
+            )
+            ctx_info.reply_to_username = getattr(reply_sender, "username", None)
     memory = await memttlcache.get(state.memory_key(user.id))
     if memory and isinstance(memory, datatype.ChatMemoryy):
         ctx_info.memory_about_user = memory

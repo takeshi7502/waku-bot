@@ -173,6 +173,9 @@ class ContextInfo:
     chat_type: str | None = None
     reply_to_msg_text: str | None = None
     reply_to_msg_id: int | None = None
+    reply_to_user_id: int | None = None
+    reply_to_user_name: str | None = None
+    reply_to_username: str | None = None
     memory_about_user: ChatMemoryy | None = None
     append_prompt: str | None = None
     is_group_chat: bool = False
@@ -193,6 +196,13 @@ class ContextInfo:
             parts.append(f"回复的消息内容: {self.reply_to_msg_text}")
         if self.reply_to_msg_id:
             parts.append(f"回复的消息ID: {self.reply_to_msg_id}")
+        if self.reply_to_user_id:
+            reply_sender = f"user_id={self.reply_to_user_id}"
+            if self.reply_to_user_name:
+                reply_sender += f", name={self.reply_to_user_name}"
+            if self.reply_to_username:
+                reply_sender += f", username=@{self.reply_to_username}"
+            parts.append(f"回复的消息发送者: {reply_sender}")
         if self.memory_about_user:
             parts.append(
                 f"关于用户的记忆: ({self.memory_about_user.to_text(is_group_chat=self.is_group_chat)})"

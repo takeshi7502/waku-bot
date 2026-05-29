@@ -57,6 +57,9 @@ class ChatConfig:
     ai_reply: bool = True
     ai_reply_other_bots_enabled: bool = False
     ai_comment: bool = False
+    agent_group_manage_enabled: bool = True
+    agent_ban_users_enabled: bool = False
+    agent_mute_users_enabled: bool = False
     setu_enabled: bool = True
     convert_b23_enabled: bool = True
     parse_artwork_enabled: bool = True
@@ -84,6 +87,13 @@ class ChatConfig:
             parse_artwork_enabled=data.get("parse_artwork_enabled", True),
             pick_bottle_enabled=data.get("pick_bottle_enabled", True),
             ai_comment=data.get("ai_comment", False),
+            agent_group_manage_enabled=data.get(
+                "agent_group_manage_enabled",
+                data.get("agent_ban_users_enabled", True)
+                or data.get("agent_mute_users_enabled", False),
+            ),
+            agent_ban_users_enabled=data.get("agent_ban_users_enabled", False),
+            agent_mute_users_enabled=data.get("agent_mute_users_enabled", False),
             group_memory_enabled=data.get("group_memory_enabled", True),
             lang=data.get("lang", "vi-VN"),
         )
