@@ -1,4 +1,6 @@
-﻿import asyncio
+import asyncio
+import json
+import re
 from io import BytesIO
 
 import pyrogram
@@ -17,16 +19,38 @@ from .whitelist import is_chat_allowed
 
 embedder: Embedder | None = None
 _description_agent: Agent[None, str] | None = None
+_embedding_agent: Agent[None, str] | None = None
 
 if app_config.agent_sticker_memory:
-    embedder = Embedder(
-        provider.make_embed_model(app_config.agent_sticker_embed_model),
-        settings=EmbeddingSettings(
-            dimensions=app_config.agent_sticker_embed_dimensions
-        ),
+    _desc_spec = (
+        app_config.agent_sticker_description_model
+        or app_config.agent_model_multimodal
+        or app_config.agent_model
     )
+    _embed_spec = app_config.agent_sticker_embed_model
+    if _embed_spec is None:
+        chat_embed_spec = app_config.agent_model_multimodal or app_config.agent_model
+        assert chat_embed_spec is not None
+        _embedding_agent = Agent(
+            model=provider.make_chat_model(chat_embed_spec),
+            output_type=str,
+            retries=2,
+        )
+    elif _embed_spec.startswith("chat/"):
+        chat_embed_spec = _embed_spec.removeprefix("chat/")
+        _embedding_agent = Agent(
+            model=provider.make_chat_model(chat_embed_spec),
+            output_type=str,
+            retries=2,
+        )
+    else:
+        embedder = Embedder(
+            provider.make_embed_model(_embed_spec),
+            settings=EmbeddingSettings(
+                dimensions=app_config.agent_sticker_embed_dimensions
+            ),
+        )
 
-    _desc_spec = app_config.agent_sticker_description_model or app_config.agent_model
     _description_agent = Agent(
         model=provider.make_chat_model(_desc_spec),
         output_type=str,
@@ -34,7 +58,48 @@ if app_config.agent_sticker_memory:
     )
 
 
+def _parse_embedding_vector(text: str, dimensions: int) -> list[float] | None:
+    """Parse a JSON embedding vector returned by a chat model."""
+    match = re.search(r"\[[\s\S]*\]", text)
+    if not match:
+        return None
+    try:
+        values = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(values, list):
+        return None
+    vector: list[float] = []
+    for value in values[:dimensions]:
+        if not isinstance(value, int | float):
+            return None
+        vector.append(float(value))
+    if len(vector) != dimensions:
+        return None
+    return vector
+
+
+async def _get_chat_embedding(text: str) -> list[float] | None:
+    if _embedding_agent is None:
+        return None
+    dimensions = app_config.agent_sticker_embed_dimensions
+    prompt = (
+        f"Convert this sticker search text into a semantic embedding vector of exactly {dimensions} numbers. "
+        "Return ONLY a JSON array. Each number must be between -1 and 1. "
+        "Similar moods/emotions/meanings should produce similar vectors. Text: "
+        f"{text!r}"
+    )
+    try:
+        result = await _embedding_agent.run(prompt)
+        return _parse_embedding_vector(result.output, dimensions)
+    except Exception as e:
+        logger.error(f"sticker chat embed error: {e.__class__.__name__}: {e}")
+        return None
+
+
 async def get_embedding(text: str) -> list[float] | None:
+    if _embedding_agent is not None:
+        return await _get_chat_embedding(text)
     if embedder is None:
         return None
     try:
@@ -91,6 +156,9 @@ async def _process_sticker(
 
     if await sticker_vec.exists(file_unique_id, chat_id):
         await sticker_vec.touch(file_unique_id, chat_id)
+        logger.debug(
+            f"sticker memory touched existing: chat_id={chat_id} sticker={file_unique_id}"
+        )
         return
 
     if sticker.is_animated:
@@ -130,6 +198,10 @@ async def _process_sticker(
         return
 
     await sticker_vec.upsert(file_unique_id, file_id, chat_id, description, embedding)
+    logger.info(
+        f"sticker memory saved: chat_id={chat_id} sticker={file_unique_id} "
+        f"description={description[:80]!r}"
+    )
 
 
 _sticker_filter = filters.sticker & (filters.group) & ~filters.bot
@@ -141,7 +213,7 @@ async def on_sticker(client: PyrogramClient, message: pyrogram.types.Message) ->
         return
     if not app_config.agent_sticker_memory:
         return
-    if embedder is None or _description_agent is None:
+    if _description_agent is None or (embedder is None and _embedding_agent is None):
         return
     chat = message.chat
     if not chat or not chat.id:

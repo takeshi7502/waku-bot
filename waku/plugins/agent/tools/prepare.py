@@ -1,4 +1,4 @@
-﻿from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from pydantic_ai import RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -115,20 +115,27 @@ async def prepare_image_edit_tools(
 async def prepare_periodic_sticker(
     ctx: RunContext[datatype.ContextDeps], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
-    """Show send_sticker only when sticker memory has enough stickers (>=20) for the chat."""
+    """Show send_sticker only when sticker memory has enough stickers for the chat."""
     if not app_config.agent_sticker_memory:
         return None
-    if sticker_memory.embedder is None:
+    if sticker_memory.embedder is None and sticker_memory._embedding_agent is None:
         return None
     if ctx.deps.chat_id is None or ctx.deps.chat_id >= -100:
         return None
 
-    # Check if the chat has enough stickers stored (minimum 20)
-    MIN_STICKER_COUNT = 20
+    # Check if the chat has enough stickers stored.
+    MIN_STICKER_COUNT = 5
     try:
         sticker_count = await sticker_vec.count(ctx.deps.chat_id)
         if sticker_count < MIN_STICKER_COUNT:
+            logger.info(
+                f"send_sticker hidden: chat_id={ctx.deps.chat_id} "
+                f"stored={sticker_count}/{MIN_STICKER_COUNT}"
+            )
             return None
+        logger.info(
+            f"send_sticker available: chat_id={ctx.deps.chat_id} stored={sticker_count}"
+        )
     except Exception as e:
         logger.warning(
             f"Failed to check sticker count for chat {ctx.deps.chat_id}: {e}"

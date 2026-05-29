@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -156,10 +156,11 @@ class _AppConfig(pydantic.BaseModel):
     agent_sticker_db_path: str = "data/sticker_vec.db"
     agent_sticker_ttl: int = 86400 * 7
     agent_sticker_min_keep_count: int = 100  # 少于此数量时不逐出过期贴纸
-    # Embedding model spec: "provider/model". Falls back to agent_model provider.
-    agent_sticker_embed_model: str = "default/text-embedding-3-small"
+    # Embedding model spec: "provider/model". When unset, sticker memory uses
+    # agent_model_multimodal as a chat-based fallback if available.
+    agent_sticker_embed_model: str | None = None
     agent_sticker_embed_dimensions: int = 1024
-    # Description model spec. Falls back to agent_model when unset.
+    # Description model spec. Falls back to agent_model_multimodal, then agent_model when unset.
     agent_sticker_description_model: str | None = None
     agent_sticker_description_prompt: str = (
         "Describe what emotion, mood, or meaning this sticker conveys in 1-2 sentences. "
