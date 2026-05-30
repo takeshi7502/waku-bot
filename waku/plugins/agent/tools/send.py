@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import random
 from dataclasses import dataclass
 from hashlib import md5
@@ -39,6 +39,77 @@ class SendResult:
         if self.message:
             msg = f"{msg}, 错误信息: {self.message}"
         return msg
+
+
+@dataclass
+class _ScheduledAgentJob:
+    job_id: str
+    kind: str
+    chat_id: int
+    user_id: int
+    run_time: datetime.datetime | None
+    summary: str
+
+
+_SCHEDULE_PREFIXES = {
+    "agent_schedule_msg": "message",
+    "agent_schedule_media": "media",
+    "agent_send_poll": "poll",
+}
+
+
+def _clean_job_id(job_id: str) -> str:
+    return job_id.removesuffix("_memory")
+
+
+def _parse_scheduled_agent_job(job) -> _ScheduledAgentJob | None:
+    job_id = _clean_job_id(str(job.id))
+    parts = job_id.split(":")
+    if len(parts) < 5 or parts[0] not in _SCHEDULE_PREFIXES:
+        return None
+    try:
+        chat_id = int(parts[1])
+        user_id = int(parts[2])
+    except ValueError:
+        return None
+
+    run_time = getattr(job, "next_run_time", None)
+    args = list(getattr(job, "args", []) or [])
+    kind = _SCHEDULE_PREFIXES[parts[0]]
+    summary = kind
+    if kind == "message" and len(args) >= 2:
+        summary = str(args[1])[:120]
+    elif kind == "media" and len(args) >= 3:
+        caption = str(args[3])[:80] if len(args) >= 4 and args[3] else ""
+        summary = f"{args[1]} {args[2]} {caption}".strip()[:120]
+    elif kind == "poll" and len(args) >= 2:
+        summary = f"poll: {args[1]}"[:120]
+
+    return _ScheduledAgentJob(
+        job_id=job_id,
+        kind=kind,
+        chat_id=chat_id,
+        user_id=user_id,
+        run_time=run_time,
+        summary=summary,
+    )
+
+
+def _scheduled_agent_jobs(chat_id: int, user_id: int | None = None) -> list[_ScheduledAgentJob]:
+    jobs: list[_ScheduledAgentJob] = []
+    for job in common.jobqueue.get_all_jobs():
+        parsed = _parse_scheduled_agent_job(job)
+        if parsed is None or parsed.chat_id != chat_id:
+            continue
+        if user_id is not None and parsed.user_id != user_id:
+            continue
+        jobs.append(parsed)
+    return sorted(jobs, key=lambda item: item.run_time or datetime.datetime.max.replace(tzinfo=datetime.UTC))
+
+
+def _format_scheduled_job(job: _ScheduledAgentJob, index: int) -> str:
+    when = job.run_time.isoformat() if job.run_time else "unknown time"
+    return f"{index}. [{job.kind}] {when} - {job.summary} - id={job.job_id}"
 
 
 # Module-level job functions for APScheduler persistence
@@ -283,6 +354,96 @@ async def schedule_message(
         return SendResult(
             success=True, message=f"Scheduled for {schedule_datetime.isoformat()}"
         ).text()
+
+
+async def list_scheduled_messages(
+    ctx: RunContext[datatype.ContextDeps],
+    only_mine: bool = False,
+) -> str:
+    """List pending scheduled messages and polls in the current chat.
+
+    Args:
+        only_mine: If True, only list schedules created by the current user.
+
+    Returns:
+        A numbered list of pending schedule jobs with their job IDs.
+    """
+    if ctx.deps.chat_id is None:
+        return SendResult(
+            success=False, message="Message context is unavailable."
+        ).text()
+    user_id = ctx.deps.user_id if only_mine else None
+    jobs = _scheduled_agent_jobs(ctx.deps.chat_id, user_id=user_id)
+    if not jobs:
+        return "Không có lịch hẹn nào trong chat này."
+    lines = [_format_scheduled_job(job, index) for index, job in enumerate(jobs, start=1)]
+    return "Lịch hẹn hiện tại:\n" + "\n".join(lines[:20])
+
+
+async def cancel_scheduled_message(
+    ctx: RunContext[datatype.ContextDeps],
+    job_id: str | None = None,
+    match_text: str | None = None,
+    cancel_all: bool = False,
+    only_mine: bool = False,
+) -> str:
+    """Cancel pending scheduled messages or polls in the current chat.
+
+    Args:
+        job_id: Exact schedule job ID from list_scheduled_messages.
+        match_text: Text to match against job ID or summary when cancelling one or more jobs.
+        cancel_all: If True, cancel all matching schedules in the current chat.
+        only_mine: If True, only cancel schedules created by the current user.
+
+    Returns:
+        A SendResult describing what was cancelled.
+    """
+    if ctx.deps.chat_id is None:
+        return SendResult(
+            success=False, message="Message context is unavailable."
+        ).text()
+
+    user_id = ctx.deps.user_id if only_mine else None
+    jobs = _scheduled_agent_jobs(ctx.deps.chat_id, user_id=user_id)
+    if not jobs:
+        return SendResult(success=False, message="Không có lịch hẹn nào để huỷ.").text()
+
+    targets: list[_ScheduledAgentJob]
+    if job_id:
+        normalized_job_id = _clean_job_id(job_id.strip())
+        targets = [job for job in jobs if job.job_id == normalized_job_id]
+    elif match_text:
+        needle = match_text.casefold().strip()
+        targets = [
+            job
+            for job in jobs
+            if needle in job.job_id.casefold() or needle in job.summary.casefold()
+        ]
+    elif cancel_all:
+        targets = jobs
+    else:
+        return SendResult(
+            success=False,
+            message="Cần job_id, match_text hoặc cancel_all=True để huỷ lịch hẹn.",
+        ).text()
+
+    if not targets:
+        return SendResult(success=False, message="Không tìm thấy lịch hẹn phù hợp.").text()
+    if len(targets) > 1 and not cancel_all and not match_text:
+        return SendResult(
+            success=False,
+            message="Tìm thấy nhiều lịch hẹn; hãy list rồi chọn job_id cụ thể.",
+        ).text()
+
+    cancelled: list[str] = []
+    for job in targets:
+        common.jobqueue.remove_job(job.job_id)
+        cancelled.append(_format_scheduled_job(job, len(cancelled) + 1))
+
+    return SendResult(
+        success=True,
+        message="Đã huỷ lịch hẹn:\n" + "\n".join(cancelled[:10]),
+    ).text()
 
 
 async def send_poll(
@@ -717,6 +878,8 @@ async def send_anime_photo(
 
 
 __all__ = [
+    "cancel_scheduled_message",
+    "list_scheduled_messages",
     "schedule_message",
     "send_anime_photo",
     "send_poll",

@@ -9,6 +9,7 @@ from pyrogram.types import ChatPermissions
 
 from waku import common, database
 from waku.affection import get_affection_rank
+from waku.config import app_config
 from waku.database.db import AsyncSessionFactory
 from waku.database.models import UserChatAssociation, UserData
 from waku.logger import logger
@@ -42,12 +43,15 @@ async def _can_request_moderation_action(
     chat_id = ctx.deps.chat_id
 
     try:
-        association = await database.get_association(user_id, chat_id)
-        if association is not None and association.is_bot_admin:
+        if user_id in app_config.owners:
             return True
 
         db_user = await database.get_user_by_id(user_id)
         if db_user is not None and db_user.is_bot_global_admin:
+            return True
+
+        association = await database.get_association(user_id, chat_id)
+        if association is not None and association.is_bot_admin:
             return True
 
         return await common.can_user_manage_bot_in_chat(user_id, chat_id)
@@ -59,19 +63,18 @@ async def _can_request_moderation_action(
         return False
 
 
-async def _is_hidden_protected_entity(user_id: int, chat_id: int) -> bool:
-    """Return whether the target has hidden bot-management protection.
-
-    The result is intentionally used only for protection and never exposed as an
-    identity/role detail to the model or chat.
-    """
+async def _is_protected_bot_admin_or_owner(user_id: int, chat_id: int) -> bool:
+    """Return whether the target is a bot owner/admin protected from bot moderation."""
     try:
-        association = await database.get_association(user_id, chat_id)
-        if association is not None and association.is_bot_admin:
+        if user_id in app_config.owners:
             return True
 
         db_user = await database.get_user_by_id(user_id)
-        return bool(db_user is not None and db_user.is_bot_global_admin)
+        if db_user is not None and db_user.is_bot_global_admin:
+            return True
+
+        association = await database.get_association(user_id, chat_id)
+        return bool(association is not None and association.is_bot_admin)
     except Exception as e:
         logger.warning(
             f"Failed to verify protected target {user_id} in chat {chat_id}: "
@@ -157,8 +160,8 @@ async def _get_checked_target_member(
 
     if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
         return None, f"User {user_id} is not an active member of this group."
-    if await _is_hidden_protected_entity(user_id, chat_id):
-        return None, f"Đây là thực thể bí ẩn, không thể {action}."
+    if await _is_protected_bot_admin_or_owner(user_id, chat_id):
+        return None, f"Cannot {action} bot admin or owner."
     if member.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
         return None, f"Refusing to {action} a group owner or administrator."
     return member, None
@@ -331,6 +334,9 @@ async def block_user(
         except Exception as e:
             logger.warning(f"Failed to check membership for user {user_id}: {e}")
             return f"Cannot verify if user {user_id} is in this group: {e.__class__.__name__}"
+
+    if await _is_protected_bot_admin_or_owner(target_id, ctx.deps.chat_id):
+        return f"Cannot block bot admin or owner {target_id}."
 
     if await common.memttlcache.get(state.user_block_immune_key(target_id)):
         return f"User {target_id} is currently immune to being blocked."

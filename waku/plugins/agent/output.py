@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import random
 import re
 from datetime import datetime
@@ -243,8 +243,10 @@ class StreamingOutput:
         except Exception as e:
             logger.error(f"Error editing message: {e.__class__.__name__} - {e}")
 
-    async def _send_new_message(self, text: str):
+    async def _send_new_message(self, text: str) -> bool:
         plain, entities = convert_md(text)
+        if not plain.strip():
+            return False
         try:
             self.reply_message = await self.message.reply_text(
                 plain[: self.MAX_MESSAGE_LENGTH],
@@ -256,6 +258,7 @@ class StreamingOutput:
         self._last_sent_text = text
         self.last_edit_time = asyncio.get_event_loop().time()
         self.edit_count += 1
+        return True
 
     async def _edit_loop(self):
         while not self._stop:
@@ -272,7 +275,8 @@ class StreamingOutput:
     async def _start(self):
         if self.is_guest:
             return
-        await self._send_new_message(self.current_text)
+        if not await self._send_new_message(self.current_text):
+            return
         self._edit_task = asyncio.create_task(self._edit_loop())
 
     async def append_delta(self, delta: str):
@@ -305,6 +309,8 @@ class StreamingOutput:
         if self.reply_message and self.current_text:
             text = self.current_text
             plain, entities = convert_md(text)
+            if not plain.strip():
+                return
             if text != self._last_sent_text or entities:
                 try:
                     await self.reply_message.edit_text(

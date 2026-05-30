@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 
 import pyrogram
 from pydantic import BaseModel, Field
@@ -204,7 +204,7 @@ Bot回复: {bot_full_output}
         )
         return
     logger.info(
-        f"Detected follow-up message {message.id} (reason: {relevance_result.output.reason})"  # type: ignore[union-attr]
+        f"Detected follow-up message {message.id} in chat {chat.id} from user {user.id}"
     )
     if await common.memstore.get(state.waiting_key(user.id)):
         return

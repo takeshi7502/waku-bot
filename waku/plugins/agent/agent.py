@@ -240,6 +240,12 @@ if app_config.agent and app_config.agent_model:
                 prepare=tools.prepare_not_guest_mode,
                 sequential=True,
             ),
+            Tool(tools.list_scheduled_messages, prepare=tools.prepare_not_guest_mode),
+            Tool(
+                tools.cancel_scheduled_message,
+                prepare=tools.prepare_not_guest_mode,
+                sequential=True,
+            ),
             Tool(
                 tools.send_poll,
                 prepare=tools.prepare_not_guest_mode,

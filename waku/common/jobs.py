@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 from collections.abc import Callable
 from typing import Any
 
@@ -65,6 +65,8 @@ class _TaskScheduler:
                 kwargs=kwargs or {},
                 replace_existing=replace_existing,
                 jobstore="default",
+                misfire_grace_time=60,
+                coalesce=True,
             )
             return job
         except ValueError as e:
@@ -82,6 +84,8 @@ class _TaskScheduler:
                     kwargs=kwargs or {},
                     replace_existing=replace_existing,
                     jobstore="memory",
+                    misfire_grace_time=60,
+                    coalesce=True,
                 )
                 logger.info(
                     f"Job '{id}' added to memory storage (will NOT survive restart)"

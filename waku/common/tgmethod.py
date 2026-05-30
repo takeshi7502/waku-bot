@@ -176,6 +176,8 @@ async def can_user_manage_bot_in_chat(
         raise ValueError("User ID and Chat ID must not be None")
     if user_id == enums.ChatID.ANONYMOUS_ADMIN:
         return True
+    if user_id in app_config.owners:
+        return True
     db_user = await database.get_user_by_id(user_id)
     if db_user is None:
         raise ValueError("User not found")
