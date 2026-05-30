@@ -1,4 +1,4 @@
-﻿import random
+import random
 
 import pyrogram
 import zhconv
@@ -10,6 +10,15 @@ from waku.common.memory_store import memttlcache
 from waku.common.utils import is_explicit_reply
 from waku.config import app_config
 from waku.services import manyacg
+
+
+def _bot_wake_keywords() -> list[str]:
+    keywords = [keyword.casefold() for keyword in app_config.bot_keywords if keyword.strip()]
+    if keywords:
+        return keywords
+    if app_config.nickname:
+        return [app_config.nickname.casefold()]
+    return []
 
 _BOTTLE_MSG_PREFIX = "bottle_msg:"
 _REPLY_INTENT_PREFIX = "bottle_reply_intent:"
@@ -77,7 +86,8 @@ async def _mention_me_filter_func(
     text = message.text or message.caption or ""
     if not text:
         return False
-    if app_config.nickname and app_config.nickname in text:
+    lowered = text.casefold()
+    if any(keyword in lowered for keyword in _bot_wake_keywords()):
         return True
     if not client.me:
         return False

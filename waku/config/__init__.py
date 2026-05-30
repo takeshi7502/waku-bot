@@ -37,6 +37,7 @@ class _AppConfig(pydantic.BaseModel):
     lang: str = "vi-VN"
     fans_channel: str | int | None = None  # username or chat_id
     nickname: str = "waku"
+    bot_keywords: list[str] = []
 
     # health check server for container monitoring
     health_check_enabled: bool = False

@@ -8,6 +8,9 @@ use_ipv6 = false
 log_retention_days = 30
 log_level = "INFO"
 lang = "vi-VN"
+# Bot wake words. If non-empty, these fully replace the old default nickname wake key.
+# Set [] to fall back to nickname, which defaults to "waku".
+bot_keywords = []
 health_check_enabled = true
 
 redis = false
