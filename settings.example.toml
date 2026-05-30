@@ -8,7 +8,21 @@ use_ipv6 = false
 log_retention_days = 30
 log_level = "INFO"
 lang = "vi-VN"
+bot_keywords = ["waku"]
 health_check_enabled = true
+
+# Discord AI chat bridge. Requires enabling Message Content Intent in Discord Developer Portal.
+discord_enabled = false
+discord_token = "YOUR_DISCORD_BOT_TOKEN"
+# Bot wake words for Telegram and Discord keyword calls.
+discord_keywords = []
+discord_channel_allowlist = []
+discord_members_intent = true
+# Discord server admin command prefix and extra bot admins.
+discord_command_prefix = "!"
+discord_admin_users = []
+# Hide noisy APScheduler missed-run warnings.
+discord_suppress_scheduler_warnings = true
 
 redis = false
 redis_endpoint = "localhost"

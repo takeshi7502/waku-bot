@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 
 import pyrogram
 from pydantic import BaseModel, Field

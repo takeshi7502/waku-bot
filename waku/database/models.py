@@ -65,6 +65,9 @@ class ChatConfig:
     parse_artwork_enabled: bool = True
     pick_bottle_enabled: bool = True
     group_memory_enabled: bool = True
+    discord_enabled: bool = False
+    discord_muted: bool = False
+    discord_allow_r18: bool = False
     lang: str = "vi-VN"
 
     @classmethod
@@ -95,6 +98,9 @@ class ChatConfig:
             agent_ban_users_enabled=data.get("agent_ban_users_enabled", False),
             agent_mute_users_enabled=data.get("agent_mute_users_enabled", False),
             group_memory_enabled=data.get("group_memory_enabled", True),
+            discord_enabled=data.get("discord_enabled", False),
+            discord_muted=data.get("discord_muted", False),
+            discord_allow_r18=data.get("discord_allow_r18", False),
             lang=data.get("lang", "vi-VN"),
         )
 

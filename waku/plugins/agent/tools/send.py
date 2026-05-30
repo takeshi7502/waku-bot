@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 import random
 from dataclasses import dataclass
 from hashlib import md5
@@ -408,7 +408,7 @@ async def send_sticker(
             success=False, message="Message context is unavailable."
         ).text()
 
-    if sticker_memory.embedder is None:
+    if sticker_memory.embedder is None and sticker_memory._embedding_agent is None:
         return SendResult(
             success=False, message="Sticker memory is not configured."
         ).text()

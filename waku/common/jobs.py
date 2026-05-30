@@ -1,4 +1,5 @@
-﻿import datetime
+import datetime
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from waku.config import app_config
 from waku.database.db import sync_engine
 from waku.logger import logger
 
@@ -31,7 +33,18 @@ class _TaskScheduler:
             ),
             "memory": MemoryJobStore(),  # 内存回退存储
         }
-        self._scheduler = AsyncIOScheduler(jobstores=jobstores)
+        job_defaults = {
+            "coalesce": True,
+            "max_instances": 1,
+            "misfire_grace_time": 300,
+        }
+        self._scheduler = AsyncIOScheduler(
+            jobstores=jobstores,
+            job_defaults=job_defaults,
+        )
+        if app_config.discord_suppress_scheduler_warnings:
+            logging.getLogger("apscheduler.executors.default").setLevel(logging.ERROR)
+            logging.getLogger("apscheduler.scheduler").setLevel(logging.ERROR)
 
     def _add_job_with_fallback(
         self,

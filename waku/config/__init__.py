@@ -37,11 +37,26 @@ class _AppConfig(pydantic.BaseModel):
     lang: str = "vi-VN"
     fans_channel: str | int | None = None  # username or chat_id
     nickname: str = "waku"
+    bot_keywords: list[str] = ["waku"]
 
     # health check server for container monitoring
     health_check_enabled: bool = False
     health_check_host: str = "localhost"
     health_check_port: int = 8180
+
+    # Optional Discord bridge. Disabled by default and isolated from Telegram.
+    discord_enabled: bool = False
+    discord_token: str = ""
+    discord_keywords: list[str] | None = None
+    discord_channel_allowlist: list[int] = []
+    discord_members_intent: bool = True
+    discord_command_prefix: str = "!"
+    discord_admin_users: list[int] = []
+    discord_suppress_scheduler_warnings: bool = True
+    discord_message_history_limit: int = 20
+    discord_reply_max_messages: int = 7
+    discord_reply_delay_min: float = 0.7
+    discord_reply_delay_max: float = 3.0
 
     # external services
     redis: bool = False
@@ -299,7 +314,14 @@ def reload_config() -> tuple[bool, str, list[str]]:
         new_config = _get_typed_config(_AppConfig)
 
         # Validate critical fields haven't changed
-        critical_fields = ["token", "db_url", "api_id", "api_hash", "session_name"]
+        critical_fields = [
+            "token",
+            "discord_token",
+            "db_url",
+            "api_id",
+            "api_hash",
+            "session_name",
+        ]
         for field in critical_fields:
             if getattr(new_config, field) != getattr(app_config, field):
                 return False, f"Cannot reload: {field} changed (requires restart)", []

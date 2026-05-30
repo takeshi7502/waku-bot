@@ -16,6 +16,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "crawl4ai>=0.8.6",
     "ddgs>=9.2.3",
+    "discord.py>=2.4.0",
     "dynaconf>=3.2.13",
     "emoji>=2.11",
     "fastmcp>=2.14.0",
