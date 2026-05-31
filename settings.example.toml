@@ -10,7 +10,7 @@ log_level = "INFO"
 lang = "vi-VN"
 # Bot wake words. If non-empty, these fully replace the old default nickname wake key.
 # Set [] to fall back to nickname, which defaults to "waku".
-bot_keywords = []
+bot_keywords = [waku]
 health_check_enabled = true
 
 redis = false
@@ -21,6 +21,7 @@ redis_password = ""
 
 agent = true
 agent_multimodal = false
+agent_model_multimodal = "vision/kr/claude-haiku-4.5"
 agent_model = "default/deepseek-v4-flash"
 agent_model_small = "default/deepseek-chat"
 agent_struct_model = "default/deepseek-chat"
