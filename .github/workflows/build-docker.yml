@@ -1,4 +1,4 @@
-﻿name: Build and Publish Docker Image
+name: Build and Publish Docker Image
 
 on:
   push:
@@ -64,5 +64,9 @@ jobs:
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}:${{ github.sha }}
           platforms: linux/amd64
+          build-args: |
+            WAKU_VERSION=${{ github.ref_name }}
+            WAKU_COMMIT=${{ github.sha }}
+            WAKU_BUILD_TIME=${{ github.run_started_at }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
