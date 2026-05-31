@@ -22,14 +22,20 @@ _description_agent: Agent[None, str] | None = None
 _embedding_agent: Agent[None, str] | None = None
 
 if app_config.agent_sticker_memory:
+    # Sticker descriptions need vision/multimodal capability when possible.
+    # This is independent from the main chat model so the chat model can be
+    # swapped without breaking sticker understanding.
     _desc_spec = (
         app_config.agent_sticker_description_model
         or app_config.agent_model_multimodal
         or app_config.agent_model
     )
+    # Prefer a real embeddings model via agent_sticker_embed_model. If it is
+    # missing, use the main chat model to generate JSON vectors. This avoids
+    # requiring the vision model to also behave like an embedding model.
     _embed_spec = app_config.agent_sticker_embed_model
     if _embed_spec is None:
-        chat_embed_spec = app_config.agent_model_multimodal or app_config.agent_model
+        chat_embed_spec = app_config.agent_model
         assert chat_embed_spec is not None
         _embedding_agent = Agent(
             model=provider.make_chat_model(chat_embed_spec),
@@ -84,6 +90,8 @@ async def _get_chat_embedding(text: str) -> list[float] | None:
         return None
     dimensions = app_config.agent_sticker_embed_dimensions
     prompt = (
+        "You are emulating an embedding model for sticker search because no "
+        "native embeddings model is configured. "
         f"Convert this sticker search text into a semantic embedding vector of exactly {dimensions} numbers. "
         "Return ONLY a JSON array. Each number must be between -1 and 1. "
         "Similar moods/emotions/meanings should produce similar vectors. Text: "
@@ -198,9 +206,10 @@ async def _process_sticker(
         return
 
     await sticker_vec.upsert(file_unique_id, file_id, chat_id, description, embedding)
+    sticker_count = await sticker_vec.count(chat_id)
     logger.info(
-        f"sticker memory saved: chat_id={chat_id} sticker={file_unique_id} "
-        f"description={description[:80]!r}"
+        f"sticker memory saved ({sticker_count}/10): chat_id={chat_id} "
+        f"sticker={file_unique_id} description={description[:80]!r}"
     )
 
 

@@ -113,8 +113,10 @@ class _AppConfig(pydantic.BaseModel):
     # Model specs use the format "provider/model_name" or just "model_name"
     # (bare name uses the "default" provider).
     agent_model: str | None = "default/gpt-4.1"
-    agent_model_multimodal: str | None = None  # falls back to agent_model if unset
-    agent_model_small: str | None = None  # falls back to agent_model if unset
+    # Optional image/sticker-reading model. If unset, image/sticker tasks use agent_model.
+    agent_model_multimodal: str | None = None
+    # Optional helper models. Leave unset to use agent_model and keep TOML simple.
+    agent_model_small: str | None = None
     agent_struct_model: str | None = None
     agent_messages_threshold: int = 20
     agent_context_window_tokens: int = 0
@@ -157,8 +159,9 @@ class _AppConfig(pydantic.BaseModel):
     agent_sticker_db_path: str = "data/sticker_vec.db"
     agent_sticker_ttl: int = 86400 * 7
     agent_sticker_min_keep_count: int = 100  # 少于此数量时不逐出过期贴纸
-    # Embedding model spec: "provider/model". When unset, sticker memory uses
-    # agent_model_multimodal as a chat-based fallback if available.
+    # Embedding model spec: "provider/model". Prefer a real embeddings model here.
+    # If unset, sticker memory uses agent_model to generate chat-based vectors.
+    # If agent_model cannot produce valid vectors, sticker search is disabled.
     agent_sticker_embed_model: str | None = None
     agent_sticker_embed_dimensions: int = 1024
     # Description model spec. Falls back to agent_model_multimodal, then agent_model when unset.

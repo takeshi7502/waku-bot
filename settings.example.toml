@@ -8,9 +8,7 @@ use_ipv6 = false
 log_retention_days = 30
 log_level = "INFO"
 lang = "vi-VN"
-# Bot wake words. If non-empty, these fully replace the old default nickname wake key.
-# Set [] to fall back to nickname, which defaults to "waku".
-bot_keywords = [waku]
+bot_keywords = ["waku"]
 health_check_enabled = true
 
 redis = false
@@ -20,38 +18,12 @@ redis_db = 0
 redis_password = ""
 
 agent = true
-agent_multimodal = false
-agent_model_multimodal = "vision/kr/claude-haiku-4.5"
-agent_model = "default/deepseek-v4-flash"
-agent_model_small = "default/deepseek-chat"
-agent_struct_model = "default/deepseek-chat"
-agent_provider_url = "https://api.deepseek.com"
-agent_api_key = "YOUR_DEEPSEEK_API_KEY"
+agent_model = "default/deepseek-v4-flash" # Model chat chính của bot.
+agent_model_multimodal = "vision/kr/claude-haiku-4.5" # Model phụ để AI đọc ảnh/sticker nếu model chat chính không hỗ trợ hoặc đọc ảnh kém; bỏ trống thì dùng agent_model.
 agent_messages_threshold = 20
 agent_whitelist_mode = false
 agent_whitelist = []
 agent_prompt = '''Bạn là Waku, một người bạn dễ thương, vui tính. BẠN PHẢI LUÔN LUÔN TRẢ LỜI BẰNG TIẾNG VIỆT TRONG MỌI HOÀN CẢNH. Không bao giờ được dùng tiếng Trung.'''
-
-# Provider configuration. Each named provider can specify:
-#   url     = base URL of the API endpoint
-#   key     = API key
-#   api_type = "chat_completions" (default, broadly compatible) or "responses" (OpenAI Responses API)
-#
-# Example:
-# [agent_providers.default]
-# url = "https://api.openai.com/v1"
-# key = "sk-..."
-# api_type = "chat_completions"
-#
-# [agent_providers.openai_native]
-# url = "https://api.openai.com/v1"
-# key = "sk-..."
-# api_type = "responses"
-
-[agent_providers.default]
-url = "https://api.deepseek.com"
-key = "YOUR_DEEPSEEK_API_KEY"
-type = "chat_completions"
 
 manyacg_api_url = "https://api.manyacg.top/v1"
 manyacg_api_key = ""
@@ -65,7 +37,39 @@ manyacg_hybrid_search = true
 # infographic_api_url = "http://localhost:3000"
 # infographic_api_key = ""
 
+# Sticker memory: học sticker trong group và gửi sticker khớp ngữ nghĩa.
+# agent_sticker_embed_model là model embedding thật để tìm sticker theo ý nghĩa.
+# Nếu bỏ trống, bot dùng agent_model để tự sinh vector giả lập;
+# fallback này chạy được nhưng kém ổn định hơn embedding thật.
+# Một số embedding model thường gặp nếu provider hỗ trợ OpenAI-compatible embeddings:
+# - openai/text-embedding-3-small
+# - openai/text-embedding-3-large
+# - nomic/nomic-embed-text hoặc local/nomic-embed-text tùy tên provider của bạn
+agent_sticker_memory = true
+# agent_sticker_embed_model = "openai/text-embedding-3-small"
+agent_sticker_embed_dimensions = 64
+
 # Periodic sticker / reaction: force the model to call the tool every N conversations.
 # Set to 0 to disable.
-# agent_periodic_sticker_interval = 5
-# agent_periodic_reaction_interval = 3
+agent_periodic_sticker_interval = 10
+agent_periodic_reaction_interval = 5
+
+# Cấu hình provider đang được source sử dụng. Prefix trước tên model sẽ chọn provider tương ứng.
+# Ví dụ: agent_model = "default/deepseek-v4-flash" dùng [agent_providers.default].
+#        agent_model_multimodal = "vision/model-name" dùng [agent_providers.vision].
+# type = "chat_completions" là kiểu tương thích OpenAI phổ biến; "responses" dùng OpenAI Responses API.
+
+[agent_providers.default]
+url = "https://api.deepseek.com"
+key = "YOUR_DEEPSEEK_API_KEY"
+type = "chat_completions"
+
+[agent_providers.vision]
+url = "https://example.com/v1"
+key = "YOUR_VISION_API_KEY"
+type = "chat_completions"
+
+[agent_providers.openai]
+url = "https://api.openai.com/v1"
+key = "OPENAI_API_KEY"
+type = "chat_completions"

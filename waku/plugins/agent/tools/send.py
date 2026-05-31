@@ -569,7 +569,7 @@ async def send_sticker(
             success=False, message="Message context is unavailable."
         ).text()
 
-    if sticker_memory.embedder is None:
+    if sticker_memory.embedder is None and sticker_memory._embedding_agent is None:
         return SendResult(
             success=False, message="Sticker memory is not configured."
         ).text()
@@ -594,8 +594,15 @@ async def send_sticker(
                 message_id=ctx.deps.message.id,
             ),
         )
+        logger.info(
+            f"send_sticker success: chat_id={ctx.deps.chat_id} query={query!r} "
+            f"distance={distance:.4f} description={description[:80]!r}"
+        )
     except Exception as e:
-        logger.error(f"send_sticker send error: {e.__class__.__name__}: {e}")
+        logger.error(
+            f"send_sticker failed: chat_id={ctx.deps.chat_id} query={query!r} "
+            f"distance={distance:.4f} error={e.__class__.__name__}: {e}"
+        )
         raise ModelRetry(f"Failed to send sticker: {e.__class__.__name__}: {e}")
     # Mark as already called this turn so prepare_periodic_sticker suppresses
     # the "MUST call" hint for any further steps within the same agent run.

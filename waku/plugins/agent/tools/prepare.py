@@ -123,17 +123,16 @@ async def prepare_periodic_sticker(
     if ctx.deps.chat_id is None or ctx.deps.chat_id >= -100:
         return None
 
-    # Check if the chat has enough stickers stored.
-    MIN_STICKER_COUNT = 5
+    MIN_STICKER_COUNT = 10
     try:
         sticker_count = await sticker_vec.count(ctx.deps.chat_id)
         if sticker_count < MIN_STICKER_COUNT:
-            logger.info(
+            logger.debug(
                 f"send_sticker hidden: chat_id={ctx.deps.chat_id} "
                 f"stored={sticker_count}/{MIN_STICKER_COUNT}"
             )
             return None
-        logger.info(
+        logger.debug(
             f"send_sticker available: chat_id={ctx.deps.chat_id} stored={sticker_count}"
         )
     except Exception as e:
