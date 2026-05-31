@@ -1,4 +1,4 @@
-﻿import uvloop
+import uvloop
 
 uvloop.install()
 
@@ -17,6 +17,7 @@ from waku.config import app_config
 from waku.database import db
 from waku.health import start_health_server, stop_health_server
 from waku.logger import logger
+from waku.version import runtime_info_text
 
 
 def _get_commands_hash(commands_dict: dict[str, list[BotCommand]]) -> str:
@@ -156,6 +157,7 @@ async def init_bot(client: Client = client):
             "randmyavatar", i18n.t("bot.cmd.randmyavatar", locale=app_config.lang)
         ),
         BotCommand("reload", i18n.t("bot.cmd.reload", locale=app_config.lang)),
+        BotCommand("version", "Show runtime version"),
     ]
 
     # 构建命令字典用于检查
@@ -244,6 +246,7 @@ async def stop_bot(client: Client = client):
 
 
 async def main():
+    logger.info("\n" + runtime_info_text())
     await db.init_db()
 
     # Start health check server

@@ -1,7 +1,9 @@
 services:
   waku:
-    image: ghcr.io/takeshi7502/waku-bot:v2
-    # build: .
+    build:
+      context: .
+    image: waku-bot:local
+    # Remote image deploy option: ghcr.io/takeshi7502/waku-bot:v2
     container_name: waku-bot
     restart: unless-stopped
     ports:

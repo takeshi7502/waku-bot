@@ -1,9 +1,10 @@
-﻿"""Health check HTTP server for Docker container monitoring."""
+"""Health check HTTP server for Docker container monitoring."""
 
 from aiohttp import web
 
 from waku.bot.client import client
 from waku.logger import logger
+from waku.version import runtime_info
 
 routes = web.RouteTableDef()
 
@@ -71,6 +72,12 @@ async def readiness_check(request: web.Request) -> web.Response:
             {"status": "error", "error": str(e)},
             status=503,
         )
+
+
+@routes.get("/version")
+async def version_check(request: web.Request) -> web.Response:
+    """Return runtime build/config metadata for deployment verification."""
+    return web.json_response(runtime_info(), status=200)
 
 
 async def start_health_server(host: str = "0.0.0.0", port: int = 8080) -> web.AppRunner:
