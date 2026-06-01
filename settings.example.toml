@@ -11,11 +11,29 @@ lang = "vi-VN"
 bot_keywords = ["waku"]
 health_check_enabled = true
 
+#######################################################################
+
+discord_enabled = false
+discord_token = "YOUR_DISCORD_BOT_TOKEN"
+discord_keywords = ["waku"]
+discord_channel_allowlist = [] # ID server/channel/category/thread được phép; [] = mọi nơi sau khi server bật bằng !waku.
+discord_members_intent = true
+discord_command_prefix = "!"
+discord_admin_users = []
+discord_message_history_limit = 20
+discord_reply_max_messages = 7
+discord_reply_delay_min = 0.7
+discord_reply_delay_max = 3.0
+
+#######################################################################
+
 redis = false
 redis_endpoint = "localhost"
 redis_port = 6379
 redis_db = 0
 redis_password = ""
+
+#######################################################################
 
 agent = true
 agent_model = "default/deepseek-v4-flash" # Model chat chính của bot.
@@ -24,6 +42,8 @@ agent_messages_threshold = 20
 agent_whitelist_mode = false
 agent_whitelist = []
 agent_prompt = '''Bạn là Waku, một người bạn dễ thương, vui tính. BẠN PHẢI LUÔN LUÔN TRẢ LỜI BẰNG TIẾNG VIỆT TRONG MỌI HOÀN CẢNH. Không bao giờ được dùng tiếng Trung.'''
+
+#######################################################################
 
 manyacg_api_url = "https://api.manyacg.top/v1"
 manyacg_api_key = ""
@@ -37,6 +57,8 @@ manyacg_hybrid_search = true
 # infographic_api_url = "http://localhost:3000"
 # infographic_api_key = ""
 
+#######################################################################
+
 # Sticker memory: học sticker trong group và gửi sticker khớp ngữ nghĩa.
 # agent_sticker_embed_model là model embedding thật để tìm sticker theo ý nghĩa.
 # Nếu bỏ trống, bot dùng agent_model để tự sinh vector giả lập;
@@ -45,6 +67,7 @@ manyacg_hybrid_search = true
 # - openai/text-embedding-3-small
 # - openai/text-embedding-3-large
 # - nomic/nomic-embed-text hoặc local/nomic-embed-text tùy tên provider của bạn
+
 agent_sticker_memory = true
 # agent_sticker_embed_model = "openai/text-embedding-3-small"
 agent_sticker_embed_dimensions = 64
@@ -53,6 +76,8 @@ agent_sticker_embed_dimensions = 64
 # Set to 0 to disable.
 agent_periodic_sticker_interval = 10
 agent_periodic_reaction_interval = 5
+
+#######################################################################
 
 # Cấu hình provider đang được source sử dụng. Prefix trước tên model sẽ chọn provider tương ứng.
 # Ví dụ: agent_model = "default/deepseek-v4-flash" dùng [agent_providers.default].

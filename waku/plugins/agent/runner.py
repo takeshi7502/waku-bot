@@ -1,4 +1,4 @@
-﻿from typing import Any
+from typing import Any
 
 import pydantic_ai
 import pyrogram
@@ -9,10 +9,13 @@ from pydantic_ai import (
 from pydantic_ai.messages import (
     MULTI_MODAL_CONTENT_TYPES,
     ModelMessage,
+    ModelRequest,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
     TextPartDelta,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pyrogram.client import Client as PyrogramClient
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -58,6 +61,69 @@ async def set_chat_prompt_override(chat_id: int, prompt: str | None) -> None:
         await memttlcache.set(key, prompt)
 
 
+def _strip_multimodal_history_for_text_model(
+    history: list[ModelMessage],
+) -> list[ModelMessage]:
+    """Return history safe for text-only models.
+
+    A previous image/sticker/audio turn can remain in chat history after the next
+    normal text turn switches back to the main model. Text-only providers such as
+    DeepSeek reject OpenAI `image_url`/binary parts in historical messages, so we
+    keep the conversation shape but replace old multimodal payloads with a short
+    text marker.
+    """
+    sanitized: list[ModelMessage] = []
+    for msg in history:
+        if not isinstance(msg, ModelRequest):
+            sanitized.append(msg)
+            continue
+
+        changed = False
+        parts = []
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart) and isinstance(part.content, list):
+                content = [
+                    "[multimodal content omitted from text-model history]"
+                    if isinstance(item, MULTI_MODAL_CONTENT_TYPES)
+                    else item
+                    for item in part.content
+                ]
+                changed = changed or content != list(part.content)
+                parts.append(UserPromptPart(content=content, timestamp=part.timestamp))
+            elif isinstance(part, ToolReturnPart) and part.has_content and isinstance(
+                part.content,
+                MULTI_MODAL_CONTENT_TYPES,
+            ):
+                changed = True
+                parts.append(
+                    ToolReturnPart(
+                        tool_name=part.tool_name,
+                        content="[multimodal tool content omitted from text-model history]",
+                        tool_call_id=part.tool_call_id,
+                        metadata=part.metadata,
+                        timestamp=part.timestamp,
+                        outcome=part.outcome,
+                    )
+                )
+            else:
+                parts.append(part)
+
+        if changed:
+            sanitized.append(
+                ModelRequest(
+                    parts=parts,
+                    timestamp=msg.timestamp,
+                    instructions=msg.instructions,
+                    run_id=msg.run_id,
+                    conversation_id=msg.conversation_id,
+                    metadata=msg.metadata,
+                )
+            )
+        else:
+            sanitized.append(msg)
+    return sanitized
+
+
 async def run_agent(
     agi: Agent[Any, Any],
     client: PyrogramClient,
@@ -84,7 +150,10 @@ async def run_agent(
     if not is_chat_allowed(chat_id):
         return
 
-    needs_multimodal = check_needs_multimodal(user_prompt, history)
+    # Pick the multimodal model only when the current turn includes media.
+    # Old image/audio/video parts may remain in history, but they must not make
+    # later text-only turns keep using the multimodal model forever.
+    needs_multimodal = check_needs_multimodal(user_prompt, [])
 
     override_name = await get_chat_model_override(chat_id, "main")
     multimodal_override = await get_chat_model_override(chat_id, "multimodal")
@@ -100,6 +169,9 @@ async def run_agent(
             use_model = provider.make_chat_model(override_name)
     else:
         use_model = effective_multimodal if needs_multimodal else model
+    model_history = (
+        history if needs_multimodal else _strip_multimodal_history_for_text_model(history)
+    )
 
     try:
         ctx = TypingKeepAlive(client, message) if not is_guest_mode else None
@@ -114,7 +186,7 @@ async def run_agent(
                         model=use_model,
                         instructions=additional_instructions,
                         user_prompt=user_prompt,
-                        message_history=history,
+                        message_history=model_history,
                         deps=deps,
                     ) as agent_run:
                         async for node in agent_run:

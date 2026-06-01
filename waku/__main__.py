@@ -17,6 +17,7 @@ from waku.config import app_config
 from waku.database import db
 from waku.health import start_health_server, stop_health_server
 from waku.logger import logger
+from waku.plugins.discord_chat import start_discord_bot, stop_discord_bot
 from waku.version import runtime_info_text
 
 
@@ -223,6 +224,10 @@ async def init_bot(client: Client = client):
         )
 
     common.jobqueue.start()
+    try:
+        await start_discord_bot()
+    except Exception as e:
+        logger.error(f"Failed to start Discord AI chat: {e.__class__.__name__}: {e}")
     logger.success(i18n.t("log.inited", locale=app_config.lang))
 
 
@@ -240,6 +245,7 @@ async def stop_bot(client: Client = client):
         except Exception as e:
             logger.warning(f"Error closing code repository: {e}")
 
+    await stop_discord_bot()
     common.jobqueue.shutdown()
     await db.close_db()
     logger.success(i18n.t("log.exit", locale=app_config.lang))

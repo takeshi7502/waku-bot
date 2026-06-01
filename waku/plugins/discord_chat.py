@@ -226,6 +226,7 @@ async def _set_discord_guild_settings(
         config.discord_allow_r18 = settings.allow_r18
         chat.chat_config = config
         await session.commit()
+    await common.memttlcache.delete(f"chat_config:{guild.id}")
 
 
 async def _discord_r18_allowed(guild: discord.Guild | None) -> bool:
@@ -388,13 +389,11 @@ def _channel_candidate_ids(message: discord.Message) -> set[int]:
 
 
 async def _channel_allowed(message: discord.Message) -> bool:
-    allowlist = set(app_config.discord_channel_allowlist)
-    if allowlist and not bool(_channel_candidate_ids(message) & allowlist):
-        return False
     if message.guild is None:
         return True
+
     settings = await _discord_guild_settings(message.guild)
-    return settings.enabled and not settings.muted
+    return settings.enabled
 
 
 def _is_reply_to_bot(message: discord.Message, bot_user: discord.ClientUser) -> bool:
@@ -449,15 +448,9 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
         and not artwork_url
     ):
         return False, ""
-    if (
-        not is_dm
-        and not mentioned
-        and not replied_to_bot
-        and (keyword or setu_command or artwork_url)
-        and not await _channel_allowed(message)
-    ):
+    if not is_dm and not await _channel_allowed(message):
         logger.debug(
-            "Discord wake ignored by server/channel state: "
+            "Discord wake ignored because Waku is disabled for server: "
             f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
             f"candidate_ids={sorted(_channel_candidate_ids(message))}"
         )
@@ -1348,9 +1341,9 @@ async def _discord_config_text(guild: discord.Guild) -> str:
     return (
         "**Waku Discord config**\n"
         f"- Enabled: `{settings.enabled}`\n"
-        f"- Muted: `{settings.muted}`\n"
         f"- R18 images: `{'ON' if settings.allow_r18 else 'OFF'}`\n"
-        "\nBật/tắt tuỳ chọn rồi bấm **Lưu** để đóng menu."
+        "\nDùng `!waku` để bật toàn bộ bot trong server, `!unwaku` để tắt. "
+        "Bật/tắt R18 rồi bấm **Lưu** để đóng menu."
     )
 
 
@@ -1360,7 +1353,7 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
     if not content.startswith(prefix):
         return False
     command = content[len(prefix) :].strip().split(maxsplit=1)[0].lower()
-    if command not in {"waku", "unwaku", "mute", "unmute", "config"}:
+    if command not in {"waku", "unwaku", "config"}:
         return False
     if message.guild is None:
         return True
@@ -1376,16 +1369,9 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
             await _send_admin_notice(message, f"Đã bật Waku cho server **{message.guild.name}**.")
         case "unwaku":
             settings.enabled = False
-            await _set_discord_guild_settings(message.guild, settings)
-            await _send_admin_notice(message, f"Đã tắt Waku cho server **{message.guild.name}**.")
-        case "mute":
-            settings.muted = True
-            await _set_discord_guild_settings(message.guild, settings)
-            await _send_admin_notice(message, "Đã mute AI chat trong server này.")
-        case "unmute":
             settings.muted = False
             await _set_discord_guild_settings(message.guild, settings)
-            await _send_admin_notice(message, "Đã mở mute AI chat trong server này.")
+            await _send_admin_notice(message, f"Đã tắt Waku cho server **{message.guild.name}**.")
         case "config":
             await _set_discord_guild_settings(message.guild, settings)
             view = DiscordConfigView(message.guild)

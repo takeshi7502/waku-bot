@@ -44,6 +44,20 @@ class _AppConfig(pydantic.BaseModel):
     health_check_host: str = "localhost"
     health_check_port: int = 8180
 
+    # Optional Discord bridge. Disabled by default and isolated from Telegram.
+    discord_enabled: bool = False
+    discord_token: str = ""
+    discord_keywords: list[str] | None = None
+    discord_channel_allowlist: list[int] = []
+    discord_members_intent: bool = True
+    discord_command_prefix: str = "!"
+    discord_admin_users: list[int] = []
+    discord_suppress_scheduler_warnings: bool = True
+    discord_message_history_limit: int = 20
+    discord_reply_max_messages: int = 7
+    discord_reply_delay_min: float = 0.7
+    discord_reply_delay_max: float = 3.0
+
     # external services
     redis: bool = False
     redis_endpoint: str = "localhost"
@@ -302,8 +316,14 @@ def reload_config() -> tuple[bool, str, list[str]]:
         _settings.reload()
         new_config = _get_typed_config(_AppConfig)
 
-        # Validate critical fields haven't changed
-        critical_fields = ["token", "db_url", "api_id", "api_hash", "session_name"]
+        critical_fields = [
+            "token",
+            "discord_token",
+            "db_url",
+            "api_id",
+            "api_hash",
+            "session_name",
+        ]
         for field in critical_fields:
             if getattr(new_config, field) != getattr(app_config, field):
                 return False, f"Cannot reload: {field} changed (requires restart)", []
