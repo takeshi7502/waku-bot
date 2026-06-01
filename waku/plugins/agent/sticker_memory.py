@@ -170,9 +170,16 @@ async def _process_sticker(
         return
 
     if sticker.is_animated:
+        logger.info(
+            f"sticker memory skipped animated: chat_id={chat_id} sticker={file_unique_id}"
+        )
         return
 
     if sticker.is_video and common.FFMPEG is None:
+        logger.warning(
+            f"sticker memory skipped video without ffmpeg: chat_id={chat_id} "
+            f"sticker={file_unique_id}"
+        )
         return
 
     try:
@@ -185,6 +192,10 @@ async def _process_sticker(
         else:
             raw = await client.download_media(file_id, in_memory=True)
         if not isinstance(raw, BytesIO):
+            logger.warning(
+                f"sticker memory download returned non-bytes: chat_id={chat_id} "
+                f"sticker={file_unique_id} type={type(raw).__name__}"
+            )
             return
         image_bytes = raw.getvalue()
     except TimeoutError:
@@ -228,12 +239,23 @@ async def on_sticker(client: PyrogramClient, message: pyrogram.types.Message) ->
     if not chat or not chat.id:
         return
     if not is_chat_allowed(chat.id):
+        logger.info(f"sticker memory ignored disabled chat: chat_id={chat.id}")
         return
     sticker = message.sticker
     if sticker is None:
         return
     if not common.random_chance(app_config.agent_sticker_memory_sample_rate):
+        logger.info(
+            f"sticker memory sampled out: chat_id={chat.id} "
+            f"rate={app_config.agent_sticker_memory_sample_rate}"
+        )
         return
-    if not (await database.get_chat_config(chat.id)).ai_reply:
+    chat_config = await database.get_chat_config(chat.id)
+    if not chat_config.ai_reply:
+        logger.info(f"sticker memory ignored because ai_reply is off: chat_id={chat.id}")
         return
+    logger.info(
+        f"sticker memory processing: chat_id={chat.id} "
+        f"sticker={sticker.file_unique_id} video={bool(sticker.is_video)}"
+    )
     asyncio.create_task(_process_sticker(client, sticker, chat.id))
