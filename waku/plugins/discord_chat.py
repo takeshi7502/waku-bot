@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import asyncio
 import io
 import random
 import re
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from hashlib import md5
 
 import discord
 import httpx
@@ -22,8 +25,12 @@ from waku.services.manyacg import manyacg_client
 
 _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
-_discord_agent: Agent["DiscordContextDeps", str] | None = None
+_discord_agent: Agent[DiscordContextDeps, str] | None = None
 _warned_empty_content = False
+_server_list_view_registered = False
+
+_DISCORD_SERVER_LIST_RELOAD_ID = "waku:discord_server_list:reload"
+_DISCORD_SERVER_MENU_CACHE_KEY = "discord_server_menu_messages"
 
 
 _URL_RE = re.compile(r"https?://\S+")
@@ -58,8 +65,8 @@ _R18_KEYWORDS = (
 @dataclass
 class DiscordGuildSettings:
     enabled: bool = False
-    muted: bool = False
-    allow_r18: bool = False
+    r18_mode: int = 0
+    ai_reply: bool = True
 
 
 @dataclass
@@ -176,8 +183,254 @@ class DiscordWebImageResult:
     source_url: str | None = None
 
 
-def _history_key(channel_id: int, user_id: int) -> str:
-    return f"discord_message_history:{channel_id}:{user_id}"
+@dataclass
+class _DiscordScheduledJob:
+    job_id: str
+    guild_id: int
+    channel_id: int
+    user_id: int
+    run_time: datetime | None
+    summary: str
+
+
+def _clean_discord_job_id(job_id: str) -> str:
+    return job_id.removesuffix("_memory")
+
+
+def _parse_discord_scheduled_job(job) -> _DiscordScheduledJob | None:
+    job_id = _clean_discord_job_id(str(job.id))
+    parts = job_id.split(":")
+    if len(parts) < 6 or parts[0] != "discord_schedule_msg":
+        return None
+    try:
+        guild_id = int(parts[1])
+        channel_id = int(parts[2])
+        user_id = int(parts[3])
+    except ValueError:
+        return None
+    args = list(getattr(job, "args", []) or [])
+    summary = str(args[1])[:120] if len(args) >= 2 else "message"
+    return _DiscordScheduledJob(
+        job_id=job_id,
+        guild_id=guild_id,
+        channel_id=channel_id,
+        user_id=user_id,
+        run_time=getattr(job, "next_run_time", None),
+        summary=summary,
+    )
+
+
+def _discord_scheduled_jobs(
+    guild_id: int,
+    channel_id: int | None = None,
+    user_id: int | None = None,
+) -> list[_DiscordScheduledJob]:
+    jobs: list[_DiscordScheduledJob] = []
+    for job in common.jobqueue.get_all_jobs():
+        parsed = _parse_discord_scheduled_job(job)
+        if parsed is None or parsed.guild_id != guild_id:
+            continue
+        if channel_id is not None and parsed.channel_id != channel_id:
+            continue
+        if user_id is not None and parsed.user_id != user_id:
+            continue
+        jobs.append(parsed)
+    return sorted(jobs, key=lambda item: item.run_time or datetime.max.replace(tzinfo=UTC))
+
+
+def _format_discord_scheduled_job(job: _DiscordScheduledJob, index: int) -> str:
+    when = job.run_time.isoformat() if job.run_time else "unknown time"
+    return f"{index}. [{when}] <#{job.channel_id}> - {job.summary} - id={job.job_id}"
+
+
+async def _scheduled_discord_text_job(channel_id: int, text: str) -> None:
+    if _discord_client is None:
+        logger.error("Scheduled Discord message failed: Discord client unavailable")
+        return
+    channel = _discord_client.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await _discord_client.fetch_channel(channel_id)
+        except Exception as e:
+            logger.error(
+                "Scheduled Discord message failed to fetch channel: "
+                f"channel={channel_id} error={e.__class__.__name__}: {e}"
+            )
+            return
+    if not isinstance(channel, discord.abc.Messageable):
+        logger.error(f"Scheduled Discord target is not messageable: channel={channel_id}")
+        return
+    try:
+        await channel.send(text)
+        logger.debug(f"Scheduled Discord message sent successfully: channel={channel_id}")
+    except Exception as e:
+        logger.error(f"Scheduled Discord message failed: {e.__class__.__name__}: {e}")
+
+
+@dataclass
+class DiscordScheduleResult:
+    success: bool = True
+    message: str | None = None
+
+
+async def schedule_discord_message(
+    ctx: RunContext[DiscordContextDeps],
+    schedule_time: str | None,
+    text: str,
+    send_immediately: bool = False,
+) -> DiscordScheduleResult:
+    """Schedule a text message/reminder in the current Discord channel.
+
+    Use this when the user asks Waku to remind them, schedule a reminder, or
+    send a text message later. If the user did not provide a clear time, ask a
+    follow-up question instead of guessing.
+
+    Args:
+        schedule_time: ISO 8601 datetime string in the future.
+        text: Reminder/message text to send.
+        send_immediately: If True, send text immediately without scheduling.
+    """
+    message = ctx.deps.message
+    if message.guild is None:
+        return DiscordScheduleResult(success=False, message="Scheduling is only available in servers.")
+    if not text or not text.strip():
+        return DiscordScheduleResult(success=False, message="Reminder text is required.")
+
+    if send_immediately:
+        await message.channel.send(text.strip(), reference=message)
+        return DiscordScheduleResult(success=True, message="Message sent.")
+
+    if not schedule_time:
+        return DiscordScheduleResult(success=False, message="A future schedule_time is required.")
+    try:
+        schedule_datetime = datetime.fromisoformat(schedule_time)
+    except ValueError as e:
+        return DiscordScheduleResult(success=False, message=f"Invalid schedule_time: {e}")
+    if schedule_datetime.tzinfo is None:
+        schedule_datetime = schedule_datetime.replace(tzinfo=UTC)
+    if schedule_datetime < datetime.now(UTC):
+        return DiscordScheduleResult(success=False, message="schedule_time must be in the future.")
+
+    text_content = text.strip()
+    job_key = (
+        f"discord_schedule_msg:{message.guild.id}:{message.channel.id}:{message.author.id}"
+        f":{schedule_datetime.timestamp()}:{md5(text_content.encode()).hexdigest()}"
+    )
+    common.jobqueue.add_onetime_job(
+        job_key,
+        run_date=schedule_datetime,
+        func=_scheduled_discord_text_job,
+        args=[message.channel.id, text_content],
+    )
+    logger.info(
+        "Discord reminder scheduled: "
+        f"guild={message.guild.id} channel={message.channel.id} "
+        f"user={message.author.id} time={schedule_datetime.isoformat()}"
+    )
+    return DiscordScheduleResult(
+        success=True,
+        message=f"Scheduled for {schedule_datetime.isoformat()}",
+    )
+
+
+async def list_discord_scheduled_messages(
+    ctx: RunContext[DiscordContextDeps], only_mine: bool = False
+) -> str:
+    """List pending Discord reminders/scheduled messages in this server."""
+    message = ctx.deps.message
+    if message.guild is None:
+        return "Scheduling is only available in servers."
+    user_id = message.author.id if only_mine else None
+    jobs = _discord_scheduled_jobs(message.guild.id, user_id=user_id)
+    if not jobs:
+        return "Không có lịch hẹn nào trong server này."
+    lines = [
+        _format_discord_scheduled_job(job, index)
+        for index, job in enumerate(jobs, start=1)
+    ]
+    return "Lịch hẹn Discord hiện tại:\n" + "\n".join(lines[:20])
+
+
+async def cancel_discord_scheduled_message(
+    ctx: RunContext[DiscordContextDeps],
+    job_id: str | None = None,
+    match_text: str | None = None,
+    cancel_all: bool = False,
+    only_mine: bool = False,
+) -> DiscordScheduleResult:
+    """Cancel pending Discord reminders/scheduled messages in this server."""
+    message = ctx.deps.message
+    if message.guild is None:
+        return DiscordScheduleResult(success=False, message="Scheduling is only available in servers.")
+    user_id = message.author.id if only_mine else None
+    jobs = _discord_scheduled_jobs(message.guild.id, user_id=user_id)
+    if not jobs:
+        return DiscordScheduleResult(success=False, message="Không có lịch hẹn nào để huỷ.")
+
+    if job_id:
+        normalized = _clean_discord_job_id(job_id.strip())
+        targets = [job for job in jobs if job.job_id == normalized]
+    elif match_text:
+        needle = match_text.casefold().strip()
+        targets = [
+            job
+            for job in jobs
+            if needle in job.job_id.casefold() or needle in job.summary.casefold()
+        ]
+    elif cancel_all:
+        targets = jobs
+    else:
+        return DiscordScheduleResult(
+            success=False,
+            message="Cần job_id, match_text hoặc cancel_all=True để huỷ lịch hẹn.",
+        )
+
+    if not targets:
+        return DiscordScheduleResult(success=False, message="Không tìm thấy lịch hẹn phù hợp.")
+    if len(targets) > 1 and not cancel_all and not match_text:
+        return DiscordScheduleResult(
+            success=False,
+            message="Tìm thấy nhiều lịch hẹn; hãy list rồi chọn job_id cụ thể.",
+        )
+
+    cancelled: list[str] = []
+    for job in targets:
+        common.jobqueue.remove_job(job.job_id)
+        cancelled.append(_format_discord_scheduled_job(job, len(cancelled) + 1))
+    logger.info(
+        "Discord reminders cancelled: "
+        f"guild={message.guild.id} user={message.author.id} count={len(cancelled)}"
+    )
+    return DiscordScheduleResult(
+        success=True,
+        message="Đã huỷ lịch hẹn:\n" + "\n".join(cancelled[:10]),
+    )
+
+
+def _history_epoch_key(guild_id: int) -> str:
+    return f"discord_history_epoch:{guild_id}"
+
+
+async def _discord_history_epoch(guild: discord.Guild | None) -> str:
+    if guild is None:
+        return "dm"
+    epoch = await common.memttlcache.get(_history_epoch_key(guild.id), "0")
+    return str(epoch)
+
+
+async def _rotate_discord_history_epoch(guild: discord.Guild) -> None:
+    epoch = str(datetime.now(UTC).timestamp())
+    await common.memttlcache.set(
+        _history_epoch_key(guild.id),
+        epoch,
+        ttl=app_config.cachettl_agent_history,
+    )
+    logger.info(f"Discord AI history reset: guild={guild.name!r}({guild.id}) epoch={epoch}")
+
+
+async def _history_key(message: discord.Message) -> str:
+    epoch = await _discord_history_epoch(message.guild)
+    return f"discord_message_history:{epoch}:{message.channel.id}:{message.author.id}"
 
 
 def _waiting_key(user_id: int) -> str:
@@ -200,8 +453,8 @@ async def _discord_guild_settings(guild: discord.Guild | None) -> DiscordGuildSe
             config = chat.chat_config
         return DiscordGuildSettings(
             enabled=config.discord_enabled,
-            muted=config.discord_muted,
-            allow_r18=config.discord_allow_r18,
+            r18_mode=max(0, min(2, int(config.discord_r18_mode))),
+            ai_reply=config.discord_ai_reply,
         )
     except Exception as e:
         logger.error(f"Failed to load Discord guild settings from DB: {e}")
@@ -222,15 +475,70 @@ async def _set_discord_guild_settings(
             await session.flush()
         config = chat.chat_config
         config.discord_enabled = settings.enabled
-        config.discord_muted = settings.muted
-        config.discord_allow_r18 = settings.allow_r18
+        config.discord_muted = False
+        config.discord_allow_r18 = settings.r18_mode != 0
+        config.discord_r18_mode = max(0, min(2, int(settings.r18_mode)))
+        config.discord_ai_reply = settings.ai_reply
         chat.chat_config = config
         await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild.id}")
 
 
-async def _discord_r18_allowed(guild: discord.Guild | None) -> bool:
-    return (await _discord_guild_settings(guild)).allow_r18
+async def _delete_discord_guild_settings(guild: discord.Guild) -> None:
+    await _delete_discord_guild_settings_by_id(guild.id)
+
+
+async def _set_discord_guild_settings_by_id(
+    guild_id: int, guild_name: str | None, settings: DiscordGuildSettings
+) -> None:
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with AsyncSessionFactory() as session:
+        chat = await session.get(ChatData, guild_id)
+        if chat is None:
+            chat = ChatData(id=guild_id, title=guild_name or str(guild_id), username=None)
+            session.add(chat)
+            await session.flush()
+        elif guild_name:
+            chat.title = guild_name
+        config = chat.chat_config
+        config.discord_enabled = settings.enabled
+        config.discord_muted = False
+        config.discord_allow_r18 = settings.r18_mode != 0
+        config.discord_r18_mode = max(0, min(2, int(settings.r18_mode)))
+        config.discord_ai_reply = settings.ai_reply
+        chat.chat_config = config
+        await session.commit()
+    await common.memttlcache.delete(f"chat_config:{guild_id}")
+
+
+async def _delete_discord_guild_settings_by_id(guild_id: int) -> None:
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with AsyncSessionFactory() as session:
+        chat = await session.get(ChatData, guild_id)
+        if chat is not None:
+            await session.delete(chat)
+            await session.commit()
+    await common.memttlcache.delete(f"chat_config:{guild_id}")
+
+
+async def _discord_r18_mode(guild: discord.Guild | None) -> int:
+    return (await _discord_guild_settings(guild)).r18_mode
+
+
+def _r18_mode_label(mode: int) -> str:
+    return {
+        0: "Safe Only",
+        1: "R18 Only",
+        2: "Mixed",
+    }.get(mode, "Safe Only")
+
+
+async def _discord_ai_reply_enabled(guild: discord.Guild | None) -> bool:
+    return (await _discord_guild_settings(guild)).ai_reply
 
 
 def _contains_r18_keyword(text: str) -> bool:
@@ -264,14 +572,26 @@ async def _discord_emoji_hint(message: discord.Message) -> str | None:
     return "User/server emoji style: " + " ".join(common_emojis)
 
 
-def _is_discord_admin(message: discord.Message) -> bool:
-    if message.author.id in set(app_config.owners) | set(app_config.discord_admin_users):
-        return True
+def _is_discord_user_bot_admin(user: discord.abc.User) -> bool:
+    return user.id in set(app_config.owners) | set(app_config.discord_admin_users)
+
+
+def _is_discord_bot_admin(message: discord.Message) -> bool:
+    return _is_discord_user_bot_admin(message.author)
+
+
+def _is_discord_server_admin(message: discord.Message) -> bool:
     guild = message.guild
     if guild is not None and guild.owner_id == message.author.id:
         return True
     permissions = getattr(message.author, "guild_permissions", None)
     return bool(permissions and permissions.administrator)
+
+
+def _can_manage_discord_config(message: discord.Message, settings: DiscordGuildSettings) -> bool:
+    if _is_discord_bot_admin(message):
+        return settings.enabled
+    return settings.enabled and _is_discord_server_admin(message)
 
 
 async def _send_admin_notice(message: discord.Message, text: str) -> None:
@@ -455,6 +775,14 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
             f"candidate_ids={sorted(_channel_candidate_ids(message))}"
         )
         return False, ""
+    if not is_dm and not setu_command and not artwork_url:
+        settings = await _discord_guild_settings(message.guild)
+        if not settings.ai_reply:
+            logger.debug(
+                "Discord AI reply ignored because it is disabled for server: "
+                f"guild={_guild_name(message)!r} channel={_channel_name(message)!r}"
+            )
+            return False, ""
 
     prompt = _clean_content(message)
     if mentioned:
@@ -462,7 +790,7 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
     if keyword:
         prompt = _strip_keyword(prompt)
     if not prompt:
-        prompt = "Hãy tiếp tục cuộc trò chuyện."
+        prompt = "Please continue the conversation."
     return True, prompt
 
 
@@ -687,7 +1015,6 @@ async def _build_prompt(message: discord.Message, user_prompt: str) -> str:
     emoji_hint = await _discord_emoji_hint(message)
     if emoji_hint:
         parts.append(emoji_hint)
-    parts.append(f"Discord R18 images allowed: {await _discord_r18_allowed(message.guild)}")
     parts.append("User message:")
     parts.append(user_prompt)
     return "\n".join(parts)
@@ -784,59 +1111,122 @@ def _discord_artwork_embed(
 
 async def _fetch_discord_anime_artwork(
     keyword: str = "",
+    r18_mode: int = 0,
 ) -> tuple[manyacg_service.Artwork, manyacg_service.Picture] | None:
     if manyacg_client is None:
         return None
+    r18_mode = max(0, min(2, int(r18_mode)))
     try:
         if keyword:
+            logger.debug(
+                "Discord anime fetch: "
+                f"keyword={keyword!r} r18_mode={r18_mode}({_r18_mode_label(r18_mode)})"
+            )
             resp = await manyacg_client.client.get(
                 "/artwork/list",
                 params={
-                    "r18": 2,
+                    "r18": r18_mode,
                     "hybrid": app_config.manyacg_hybrid_search,
                     "keyword": keyword,
                 },
             )
             if resp.status_code != 200:
-                logger.error(f"Discord anime photo API returned {resp.status_code}")
+                logger.error(
+                    "Discord anime photo API returned "
+                    f"{resp.status_code}: {resp.text[:300]!r}"
+                )
                 return None
             resp_model = manyacg_service.RandomArtworkResponse.model_validate(
                 resp.json()
             )
         else:
-            resp_model = await manyacg_client.random_artwork(limit=1, r18=2)
+            logger.debug(
+                "Discord anime fetch random: "
+                f"r18_mode={r18_mode}({_r18_mode_label(r18_mode)})"
+            )
+            resp_model = await manyacg_client.random_artwork(limit=1, r18=r18_mode)
         if resp_model.status != 200 or not resp_model.data:
             logger.error(
                 "Discord anime photo API failed: "
-                f"status={resp_model.status} message={resp_model.message!r}"
+                f"status={resp_model.status} message={resp_model.message!r} "
+                f"r18_mode={r18_mode}({_r18_mode_label(r18_mode)})"
             )
             return None
         artwork = random.choice(resp_model.data)
         if not artwork.pictures:
+            logger.error(
+                "Discord anime fetch returned artwork without pictures: "
+                f"title={artwork.title!r} r18={artwork.r18}"
+            )
             return None
+        logger.debug(
+            "Discord anime fetch success: "
+            f"title={artwork.title!r} r18={artwork.r18} "
+            f"pictures={len(artwork.pictures)} r18_mode={r18_mode}"
+        )
         return artwork, random.choice(artwork.pictures)
     except Exception as e:
         logger.error(f"Discord anime photo fetch error: {e.__class__.__name__}: {e}")
         return None
 
 
+async def _send_discord_image_embed(
+    message: discord.Message,
+    embed: discord.Embed,
+    image_url: str,
+    view: discord.ui.View | None = None,
+    *,
+    spoiler: bool = False,
+) -> bool:
+    if not spoiler:
+        embed.set_image(url=image_url)
+        await message.channel.send(embed=embed, view=view, reference=message)
+        return True
+
+    downloaded = await _download_image_bytes(image_url)
+    if downloaded is None:
+        logger.warning("Discord R18 spoiler image download failed; not exposing image URL")
+        return False
+
+    data, content_type = downloaded
+    filename = "SPOILER_" + _image_filename(content_type)
+    file = discord.File(io.BytesIO(data), filename=filename, spoiler=True)
+    await message.channel.send(file=file, view=view, reference=message)
+    return True
+
+
 async def _send_discord_anime_photo_card(
     message: discord.Message,
     artwork: manyacg_service.Artwork,
     picture: manyacg_service.Picture,
-) -> None:
+) -> bool:
     original_url = f"https://t.me/{app_config.manyacg_bot}/?start=file_{picture.id}"
     embed = _discord_artwork_embed(
         title=artwork.title,
         source_url=artwork.source_url,
-        image_url=picture.regular,
+        image_url="",
         r18=artwork.r18,
     )
-    await message.channel.send(
-        embed=embed,
-        view=_discord_artwork_view(artwork.source_url, original_url),
-        reference=message,
+    success = await _send_discord_image_embed(
+        message,
+        embed,
+        picture.regular,
+        _discord_artwork_view(artwork.source_url, original_url),
+        spoiler=artwork.r18,
     )
+    if success:
+        logger.info(
+            "Discord anime send success: "
+            f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+            f"title={artwork.title!r} r18={artwork.r18} spoiler={artwork.r18}"
+        )
+    else:
+        logger.error(
+            "Discord anime send failed: "
+            f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+            f"title={artwork.title!r} r18={artwork.r18}"
+        )
+    return success
 
 
 async def get_discord_server_info(
@@ -1083,10 +1473,8 @@ async def send_discord_web_image(
     search_query = query.strip()
     if not search_query:
         return DiscordWebImageResult(success=False, message="Image search query is empty.")
-    if (
-        not await _discord_r18_allowed(message.guild)
-        and _contains_r18_keyword(search_query)
-    ):
+    r18_mode = await _discord_r18_mode(message.guild)
+    if r18_mode == 0 and _contains_r18_keyword(search_query):
         return DiscordWebImageResult(
             success=False,
             message="R18 web image search is disabled in this Discord server.",
@@ -1104,10 +1492,7 @@ async def send_discord_web_image(
             continue
         title = str(result.get("title") or search_query)
         source_url = str(result.get("url") or image_url)
-        if (
-            not await _discord_r18_allowed(message.guild)
-            and _contains_r18_keyword(" ".join([title, source_url, image_url]))
-        ):
+        if r18_mode == 0 and _contains_r18_keyword(" ".join([title, source_url, image_url])):
             continue
         try:
             downloaded = await _download_image_bytes(str(image_url))
@@ -1143,15 +1528,18 @@ async def send_discord_anime_photo(
 ) -> DiscordAnimePhotoResult:
     """Get and send an anime/Pixiv image to the current Discord chat.
 
-    Use this tool when the user naturally asks Waku to send an anime image,
-    Pixiv image, picture, photo, setu, or similar. Only call it when sending an
-    actual image is appropriate in the conversation.
+    Call this tool when the user naturally asks Waku to send/show/give an
+    anime/Pixiv image, picture, photo, setu, ảnh, hình, or similar. The current
+    Discord server R18 mode is applied inside this tool as an API filter only.
+    If this tool returns success=False, tell the user the image could not be
+    sent instead of claiming that an image was sent.
 
     Args:
-        keyword: Optional search keyword for a more specific anime/Pixiv image.
+        keyword: Optional keyword to search for specific anime/Pixiv images.
     """
     message = ctx.deps.message
-    if not await _discord_r18_allowed(message.guild) and _contains_r18_keyword(keyword):
+    r18_mode = await _discord_r18_mode(message.guild)
+    if r18_mode == 0 and _contains_r18_keyword(keyword):
         return DiscordAnimePhotoResult(
             success=False,
             message="R18 image sending is disabled in this Discord server.",
@@ -1176,19 +1564,18 @@ async def send_discord_anime_photo(
         f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
         f"user={message.author.id} keyword={keyword!r}"
     )
-    fetched = await _fetch_discord_anime_artwork(keyword.strip())
+    fetched = await _fetch_discord_anime_artwork(keyword.strip(), r18_mode=r18_mode)
     if fetched is None:
         return DiscordAnimePhotoResult(
             success=False,
             message="Failed to fetch anime artwork from ManyACG.",
         )
     artwork, picture = fetched
-    if artwork.r18 and not await _discord_r18_allowed(message.guild):
+    if not await _send_discord_anime_photo_card(message, artwork, picture):
         return DiscordAnimePhotoResult(
             success=False,
-            message="R18 image sending is disabled in this Discord server.",
+            message="Failed to upload the anime artwork to Discord.",
         )
-    await _send_discord_anime_photo_card(message, artwork, picture)
     artist = None
     if artwork.artist is not None:
         artist = DiscordArtistInfo(
@@ -1212,89 +1599,101 @@ async def send_discord_anime_photo(
 
 async def _send_discord_setu(message: discord.Message) -> bool:
     if manyacg_client is None:
-        await message.channel.send("ManyACG chưa được cấu hình nên chưa gửi ảnh được.", reference=message)
+        await message.channel.send("ManyACG is not configured, so Waku cannot send images yet.", reference=message)
         return True
 
     ratekey = f"discord_setu_cd:{message.channel.id}:{message.author.id}"
     if await common.memttlcache.get(ratekey, False):
-        await message.channel.send("Từ từ đã, đợi cooldown xíu nha.", reference=message)
+        await message.channel.send("Please wait a moment before requesting another image.", reference=message)
         return True
     await common.memttlcache.set(ratekey, True, ttl=app_config.manyacg_setu_cd)
 
     try:
+        r18_mode = await _discord_r18_mode(message.guild)
         async with message.channel.typing():
-            fetched = await _fetch_discord_anime_artwork()
+            fetched = await _fetch_discord_anime_artwork(r18_mode=r18_mode)
         if fetched is None:
-            await message.channel.send("Không lấy được ảnh từ ManyACG rồi.", reference=message)
+            await message.channel.send("Could not fetch an image from ManyACG.", reference=message)
             return True
         artwork, picture = fetched
-        if artwork.r18 and not await _discord_r18_allowed(message.guild):
-            await message.channel.send("Server này đang tắt R18 nên Waku không gửi ảnh này nha.", reference=message)
-            return True
         await _send_discord_anime_photo_card(message, artwork, picture)
         return True
     except Exception as e:
         logger.error(f"Discord setu error: {e.__class__.__name__}: {e}")
-        await message.channel.send("Gửi ảnh lỗi rồi, thử lại sau nha.", reference=message)
+        await message.channel.send("Image sending failed. Please try again later.", reference=message)
         return True
 
 
 async def _send_discord_artwork(message: discord.Message, artwork_url: str) -> bool:
     if manyacg_client is None:
-        await message.channel.send("ManyACG chưa được cấu hình nên chưa parse Pixiv được.", reference=message)
+        await message.channel.send("ManyACG is not configured, so Waku cannot parse artwork links yet.", reference=message)
         return True
     if not app_config.manyacg_api_key:
-        await message.channel.send("ManyACG API key chưa có nên chưa parse link Pixiv được.", reference=message)
+        await message.channel.send("ManyACG API key is missing, so Waku cannot parse artwork links yet.", reference=message)
         return True
 
     try:
         async with message.channel.typing():
             resp = await manyacg_client.fetch_artwork(artwork_url)
         if resp.status != 200 or resp.data is None:
-            await message.channel.send("Không lấy được artwork từ link này.", reference=message)
+            await message.channel.send("Could not fetch artwork from this link.", reference=message)
             return True
         artwork = resp.data
-        if artwork.r18 and not await _discord_r18_allowed(message.guild):
-            await message.channel.send("Server này đang tắt R18 nên Waku không gửi artwork này nha.", reference=message)
+        if artwork.r18 and await _discord_r18_mode(message.guild) == 0:
+            await message.channel.send("R18 artwork is disabled in this Discord server.", reference=message)
             return True
         pictures = sorted(artwork.pictures or [], key=lambda item: item.index)
         if not pictures:
-            await message.channel.send("Artwork này không có ảnh để gửi.", reference=message)
+            await message.channel.send("This artwork has no image to send.", reference=message)
             return True
-        embeds = [
-            _discord_artwork_embed(
+        sent = False
+        view = _discord_artwork_view(artwork.source_url)
+        for index, picture in enumerate(pictures[:4], start=1):
+            embed = _discord_artwork_embed(
                 title=artwork.title,
                 source_url=artwork.source_url,
-                image_url=picture.original,
+                image_url="",
                 r18=artwork.r18,
                 description=artwork.description if index == 1 else None,
                 index=index if len(pictures) > 1 else None,
             )
-            for index, picture in enumerate(pictures[:4], start=1)
-        ]
-        if len(pictures) > 4:
-            embeds[0].add_field(
-                name="Còn nữa",
-                value=f"Artwork có {len(pictures)} ảnh, đang gửi 4 ảnh đầu.",
-                inline=False,
+            if index == 1 and len(pictures) > 4:
+                embed.add_field(
+                    name="More images",
+                    value=f"This artwork has {len(pictures)} images; sending the first 4.",
+                    inline=False,
+                )
+            success = await _send_discord_image_embed(
+                message,
+                embed,
+                picture.original,
+                view if not sent else None,
+                spoiler=artwork.r18,
             )
-        await message.channel.send(
-            embeds=embeds,
-            view=_discord_artwork_view(artwork.source_url),
-            reference=message,
-        )
+            if not success:
+                await message.channel.send(
+                    "Failed to upload this R18 artwork as a spoiler attachment.",
+                    reference=message,
+                )
+                return True
+            sent = True
         return True
     except Exception as e:
         logger.error(f"Discord artwork parse error: {e.__class__.__name__}: {e}")
-        await message.channel.send("Parse link Pixiv/artwork lỗi rồi.", reference=message)
+        await message.channel.send("Failed to parse this artwork link.", reference=message)
         return True
 
 
 class DiscordConfigView(discord.ui.View):
-    def __init__(self, guild: discord.Guild):
+    def __init__(self, guild: discord.Guild, settings: DiscordGuildSettings):
         super().__init__(timeout=300)
         self.guild = guild
         self.message: discord.Message | None = None
+        self.pending_settings = DiscordGuildSettings(
+            enabled=settings.enabled,
+            r18_mode=settings.r18_mode,
+            ai_reply=settings.ai_reply,
+        )
 
     async def on_timeout(self) -> None:
         if self.message is None:
@@ -1304,30 +1703,61 @@ class DiscordConfigView(discord.ui.View):
         except Exception:
             pass
 
-    async def _sync_button(self) -> None:
-        settings = await _discord_guild_settings(self.guild)
-        button = self.children[0]
-        if isinstance(button, discord.ui.Button):
-            button.label = f"R18: {'ON' if settings.allow_r18 else 'OFF'}"
-            button.style = discord.ButtonStyle.danger if settings.allow_r18 else discord.ButtonStyle.secondary
+    async def _sync_buttons(self) -> None:
+        r18_button = self.children[0]
+        if isinstance(r18_button, discord.ui.Button):
+            r18_button.label = f"R18: {_r18_mode_label(self.pending_settings.r18_mode)}"
+            r18_button.style = (
+                discord.ButtonStyle.danger
+                if self.pending_settings.r18_mode == 1
+                else discord.ButtonStyle.secondary
+                if self.pending_settings.r18_mode == 0
+                else discord.ButtonStyle.primary
+            )
+        ai_button = self.children[1]
+        if isinstance(ai_button, discord.ui.Button):
+            ai_button.label = f"AI Reply: {'ON' if self.pending_settings.ai_reply else 'OFF'}"
+            ai_button.style = (
+                discord.ButtonStyle.success
+                if self.pending_settings.ai_reply
+                else discord.ButtonStyle.secondary
+            )
 
     @discord.ui.button(label="R18", style=discord.ButtonStyle.secondary)
     async def toggle_r18(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
-        settings = await _discord_guild_settings(self.guild)
-        settings.allow_r18 = not settings.allow_r18
-        await _set_discord_guild_settings(self.guild, settings)
-        await self._sync_button()
+        self.pending_settings.r18_mode = (self.pending_settings.r18_mode + 1) % 3
+        await self._sync_buttons()
         await interaction.response.edit_message(
-            content=await _discord_config_text(self.guild),
+            content=_discord_config_text(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="Lưu", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="AI Reply", style=discord.ButtonStyle.success)
+    async def toggle_ai_reply(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        self.pending_settings.ai_reply = not self.pending_settings.ai_reply
+        await self._sync_buttons()
+        await interaction.response.edit_message(
+            content=_discord_config_text(self.pending_settings),
+            view=self,
+        )
+
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.success)
     async def save_config(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
+        await _set_discord_guild_settings(self.guild, self.pending_settings)
+        await _rotate_discord_history_epoch(self.guild)
+        logger.info(
+            "Discord config saved: "
+            f"guild={self.guild.name!r}({self.guild.id}) "
+            f"r18_mode={self.pending_settings.r18_mode}"
+            f"({_r18_mode_label(self.pending_settings.r18_mode)}) "
+            f"ai_reply={self.pending_settings.ai_reply}"
+        )
         await interaction.response.defer()
         try:
             await interaction.message.delete()
@@ -1336,14 +1766,142 @@ class DiscordConfigView(discord.ui.View):
         self.stop()
 
 
-async def _discord_config_text(guild: discord.Guild) -> str:
+async def _new_discord_config_view(guild: discord.Guild) -> DiscordConfigView:
     settings = await _discord_guild_settings(guild)
+    view = DiscordConfigView(guild, settings)
+    await view._sync_buttons()
+    return view
+
+
+def _discord_config_text(settings: DiscordGuildSettings) -> str:
     return (
-        "**Waku Discord config**\n"
-        f"- Enabled: `{settings.enabled}`\n"
-        f"- R18 images: `{'ON' if settings.allow_r18 else 'OFF'}`\n"
-        "\nDùng `!waku` để bật toàn bộ bot trong server, `!unwaku` để tắt. "
-        "Bật/tắt R18 rồi bấm **Lưu** để đóng menu."
+        "**Waku Bot Server config:**\n"
+        "Server: `Authorized!`\n"
+        f"AI Reply: `{'ON' if settings.ai_reply else 'OFF'}`\n"
+        f"R18 images: `{_r18_mode_label(settings.r18_mode)}`\n"
+        "\nPress `Save` to apply changes."
+    )
+
+
+async def _discord_authorized_server_rows() -> list[tuple[int, dict]]:
+    from sqlalchemy import select
+
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with AsyncSessionFactory() as session:
+        rows = await session.execute(select(ChatData.id, ChatData.config))
+        return [
+            (chat_id, config)
+            for chat_id, config in rows.all()
+            if config and config.get("discord_enabled", False)
+        ]
+
+
+def _build_discord_server_list_embed(rows: list[tuple[int, dict]]) -> discord.Embed:
+    embed = discord.Embed(
+        title="Authorized Discord Servers",
+        description=(
+            "Servers currently authorized for Waku Discord features.\n"
+            "Use **Reload** to refresh this menu."
+        ),
+        color=0x8B5CF6,
+        timestamp=datetime.now(UTC),
+    )
+    if not rows:
+        embed.description = "No authorized Discord servers."
+        embed.color = 0x64748B
+    for guild_id, config in rows[:25]:
+        guild = _discord_client.get_guild(guild_id) if _discord_client else None
+        joined = guild is not None
+        name = guild.name if joined else "Unknown / not currently joined"
+        r18_mode = int(config.get("discord_r18_mode", 2 if config.get("discord_allow_r18", False) else 0))
+        ai_reply = bool(config.get("discord_ai_reply", True))
+        status = "🟢 Joined" if joined else "⚫ Not joined"
+        embed.add_field(
+            name=f"{'✅' if joined else '❔'} {name}"[:256],
+            value=(
+                f"**Guild ID:** `{guild_id}`\n"
+                f"**Status:** {status}\n"
+                f"**AI Reply:** `{'ON' if ai_reply else 'OFF'}`\n"
+                f"**R18 images:** `{_r18_mode_label(r18_mode)}`"
+            ),
+            inline=False,
+        )
+    if len(rows) > 25:
+        embed.set_footer(text=f"Showing first 25 of {len(rows)} servers • Last updated")
+    else:
+        embed.set_footer(text="Last updated")
+    return embed
+
+
+async def _remember_discord_server_menu(message: discord.Message) -> None:
+    try:
+        menus: list[dict] = await common.memttlcache.get(_DISCORD_SERVER_MENU_CACHE_KEY, [])
+        menus = [
+            item
+            for item in menus
+            if item.get("message_id") != message.id
+            and item.get("channel_id") != message.channel.id
+        ]
+        menus.insert(
+            0,
+            {
+                "channel_id": message.channel.id,
+                "message_id": message.id,
+                "created_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        await common.memttlcache.set(
+            _DISCORD_SERVER_MENU_CACHE_KEY,
+            menus[:20],
+            ttl=app_config.cachettl_agent_history,
+        )
+    except Exception as e:
+        logger.debug(f"Failed to remember Discord server menu: {e.__class__.__name__}: {e}")
+
+
+class DiscordServerListView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Reload",
+        style=discord.ButtonStyle.primary,
+        emoji="🔄",
+        custom_id=_DISCORD_SERVER_LIST_RELOAD_ID,
+    )
+    async def reload_servers(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        if not _is_discord_user_bot_admin(interaction.user):
+            await interaction.response.send_message(
+                "Only bot admins can reload this menu.", ephemeral=True
+            )
+            return
+        rows = await _discord_authorized_server_rows()
+        await interaction.response.edit_message(
+            embed=_build_discord_server_list_embed(rows),
+            view=self,
+        )
+        if interaction.message is not None:
+            await _remember_discord_server_menu(interaction.message)
+        logger.info(
+            "Discord server list menu reloaded: "
+            f"user={interaction.user.id} servers={len(rows)}"
+        )
+
+
+async def _send_discord_server_list(message: discord.Message) -> None:
+    rows = await _discord_authorized_server_rows()
+    sent = await message.channel.send(
+        embed=_build_discord_server_list_embed(rows),
+        view=DiscordServerListView(),
+    )
+    await _remember_discord_server_menu(sent)
+    logger.info(
+        "Discord server list menu sent: "
+        f"channel={message.channel.id} message={sent.id} servers={len(rows)}"
     )
 
 
@@ -1352,32 +1910,59 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
     content = _message_text(message)
     if not content.startswith(prefix):
         return False
-    command = content[len(prefix) :].strip().split(maxsplit=1)[0].lower()
-    if command not in {"waku", "unwaku", "config"}:
+    parts = content[len(prefix) :].strip().split(maxsplit=1)
+    command = parts[0].lower() if parts else ""
+    args = parts[1].strip() if len(parts) > 1 else ""
+    if command not in {"waku", "unwaku", "config", "server"}:
         return False
+
     if message.guild is None:
-        return True
-    if not _is_discord_admin(message):
+        if command == "server" and _is_discord_bot_admin(message):
+            await _send_discord_server_list(message)
+        elif command in {"waku", "unwaku"} and _is_discord_bot_admin(message):
+            if not args or not args.isdigit():
+                await message.channel.send(f"Usage: `{prefix}{command} <server_id>`")
+                return True
+            guild_id = int(args)
+            guild = _discord_client.get_guild(guild_id) if _discord_client else None
+            if command == "waku":
+                await _set_discord_guild_settings_by_id(
+                    guild_id,
+                    guild.name if guild else None,
+                    DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True),
+                )
+                await message.channel.send(
+                    f"Waku has been authorized for `{guild.name if guild else guild_id}`."
+                )
+            else:
+                await _delete_discord_guild_settings_by_id(guild_id)
+                await message.channel.send(f"Waku has been unauthorized for `{guild_id}`.")
+            logger.info(
+                f"Discord DM admin command: user={message.author.id} command={command} guild={guild_id}"
+            )
         return True
 
     settings = await _discord_guild_settings(message.guild)
     match command:
         case "waku":
+            if not _is_discord_bot_admin(message):
+                return True
             settings.enabled = True
-            settings.muted = False
+            settings.r18_mode = 0
+            settings.ai_reply = True
             await _set_discord_guild_settings(message.guild, settings)
-            await _send_admin_notice(message, f"Đã bật Waku cho server **{message.guild.name}**.")
+            await _send_admin_notice(message, f"Waku has been authorized for **{message.guild.name}**.")
         case "unwaku":
-            settings.enabled = False
-            settings.muted = False
-            await _set_discord_guild_settings(message.guild, settings)
-            await _send_admin_notice(message, f"Đã tắt Waku cho server **{message.guild.name}**.")
+            if not _is_discord_bot_admin(message):
+                return True
+            await _delete_discord_guild_settings(message.guild)
+            await _send_admin_notice(message, f"Waku has been unauthorized for **{message.guild.name}**.")
         case "config":
-            await _set_discord_guild_settings(message.guild, settings)
-            view = DiscordConfigView(message.guild)
-            await view._sync_button()
+            if not _can_manage_discord_config(message, settings):
+                return True
+            view = await _new_discord_config_view(message.guild)
             config_message = await message.channel.send(
-                await _discord_config_text(message.guild),
+                _discord_config_text(view.pending_settings),
                 view=view,
                 reference=message,
             )
@@ -1386,6 +1971,8 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
                 await message.delete()
             except Exception:
                 pass
+        case "server":
+            return True
     logger.info(
         f"Discord admin command: guild={message.guild.id} user={message.author.id} command={command}"
     )
@@ -1419,7 +2006,7 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
         await message.channel.send("Thinking...", reference=message)
         return
 
-    history_key = _history_key(message.channel.id, message.author.id)
+    history_key = await _history_key(message)
     history: list[ModelMessage] = await common.memttlcache.get(history_key, [])
     history = _sanitize_discord_history(history)
     prompt = await _build_prompt(message, user_prompt)
@@ -1461,6 +2048,11 @@ def _create_client() -> discord.Client:
             logger.warning("Discord client ready without user")
             return
         logger.success(f"Discord AI chat ready as {user} ({user.id})")
+        global _server_list_view_registered
+        if not _server_list_view_registered:
+            client.add_view(DiscordServerListView())
+            _server_list_view_registered = True
+            logger.info("Discord persistent server list view registered")
 
     @client.event
     async def on_message(message: discord.Message) -> None:
@@ -1509,12 +2101,20 @@ async def start_discord_bot() -> None:
             "Discord style: keep Waku's cute, playful chat style. "
             "Use natural emojis/emoticons in most casual replies, usually 1-3, "
             "but do not spam them or add them to serious/admin/error messages. "
-            "Discord image behavior: if the user clearly asks Waku to send an "
-            "anime/Pixiv image, photo, picture, setu, ảnh, or hình, choose "
-            "whether it fits the conversation and call send_discord_anime_photo "
-            "once when it does. For general internet/web image requests, use "
-            "send_discord_web_image with a concise search query. Do not mention "
-            "tool internals to the user. "
+            "Discord image behavior: when the user asks Waku to send/show/give "
+            "an anime/Pixiv image, photo, picture, setu, ảnh, or hình, call "
+            "send_discord_anime_photo exactly once before final text unless you "
+            "are intentionally refusing. Pass a concise keyword when the user "
+            "names a character or topic. For general internet/web image "
+            "requests, use send_discord_web_image with a concise search query. "
+            "If an image tool returns success=False, explain that failure and "
+            "do not claim an image was sent. Do not mention tool internals to "
+            "the user. "
+            "Discord reminder behavior: when the user asks Waku to remind, "
+            "schedule, or send a text later, use schedule_discord_message. "
+            "If the time is missing or ambiguous, ask a short follow-up. Use "
+            "list_discord_scheduled_messages and cancel_discord_scheduled_message "
+            "for listing/cancelling reminders. "
             "Discord context tools: when useful, Waku may inspect the current "
             "server/channel, resolve Discord users, mention users with returned "
             "<@user_id> mention strings, and search recent readable channel "
@@ -1529,6 +2129,9 @@ async def start_discord_bot() -> None:
             Tool(search_discord_messages, sequential=True),
             Tool(send_discord_web_image, sequential=True),
             Tool(send_discord_anime_photo, sequential=True),
+            Tool(schedule_discord_message, sequential=True),
+            Tool(list_discord_scheduled_messages, sequential=True),
+            Tool(cancel_discord_scheduled_message, sequential=True),
         ],
         retries=3,
     )

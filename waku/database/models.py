@@ -68,6 +68,8 @@ class ChatConfig:
     discord_enabled: bool = False
     discord_muted: bool = False
     discord_allow_r18: bool = False
+    discord_r18_mode: int = 0
+    discord_ai_reply: bool = True
     lang: str = "vi-VN"
 
     @classmethod
@@ -101,6 +103,11 @@ class ChatConfig:
             discord_enabled=data.get("discord_enabled", False),
             discord_muted=data.get("discord_muted", False),
             discord_allow_r18=data.get("discord_allow_r18", False),
+            discord_r18_mode=data.get(
+                "discord_r18_mode",
+                2 if data.get("discord_allow_r18", False) else 0,
+            ),
+            discord_ai_reply=data.get("discord_ai_reply", True),
             lang=data.get("lang", "vi-VN"),
         )
 

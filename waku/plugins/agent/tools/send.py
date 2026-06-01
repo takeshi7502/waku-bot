@@ -594,7 +594,7 @@ async def send_sticker(
                 message_id=ctx.deps.message.id,
             ),
         )
-        logger.info(
+        logger.debug(
             f"send_sticker success: chat_id={ctx.deps.chat_id} query={query!r} "
             f"distance={distance:.4f} description={description[:80]!r}"
         )
