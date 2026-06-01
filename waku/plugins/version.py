@@ -7,7 +7,7 @@ from waku import database
 from waku.config import app_config
 from waku.version import runtime_info_telegram_text
 
-_AUTO_DELETE_SECONDS = 30
+_AUTO_DELETE_SECONDS = 60
 
 
 @pyrogram.Client.on_message(pyrogram.filters.command("version"), group=0)

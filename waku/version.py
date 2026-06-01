@@ -22,6 +22,24 @@ def _short_commit(commit: str) -> str:
     return commit[:12]
 
 
+def _discord_status() -> str:
+    if not app_config.discord_token:
+        return "disabled"
+    try:
+        from waku.plugins import discord_chat
+
+        client = discord_chat._discord_client
+        if client is not None and client.is_ready():
+            user = client.user
+            return f"ready as {user}" if user else "ready"
+        task = discord_chat._discord_task
+        if task is not None and not task.done():
+            return "connecting"
+        return "offline"
+    except Exception:
+        return "unknown"
+
+
 def runtime_info() -> dict[str, Any]:
     """Return version/config details useful for deployment verification."""
     commit = _env("WAKU_COMMIT")
@@ -37,6 +55,8 @@ def runtime_info() -> dict[str, Any]:
         "sticker_embed_model": app_config.agent_sticker_embed_model,
         "sticker_embed_dimensions": app_config.agent_sticker_embed_dimensions,
         "health_check_port": app_config.health_check_port,
+        "discord_token_configured": bool(app_config.discord_token),
+        "discord_status": _discord_status(),
     }
 
 
@@ -54,6 +74,7 @@ def runtime_info_text() -> str:
         f"sticker_memory: {info['sticker_memory']}",
         f"sticker_embed_model: {info['sticker_embed_model']}",
         f"sticker_embed_dimensions: {info['sticker_embed_dimensions']}",
+        f"discord_status: {info['discord_status']}",
     ]
     return "\n".join(lines)
 
@@ -79,7 +100,11 @@ def runtime_info_telegram_text() -> str:
             f"• Embed: <code>{sticker_embed_model}</code>",
             f"• Dims: <code>{info['sticker_embed_dimensions']}</code>",
             "",
+            "<b>🛰️ Discord</b>",
+            f"• Token: <code>{info['discord_token_configured']}</code>",
+            f"• Status: <code>{info['discord_status']}</code>",
+            "",
             f"<b>⚙️ Settings:</b> <code>{info['settings_path']}</code>",
-            "<i>Tin nhắn này tự xoá sau 30s.</i>",
+            "<i>Tin nhắn này tự xoá sau 60s.</i>",
         ]
     )
