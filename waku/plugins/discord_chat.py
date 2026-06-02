@@ -12,8 +12,14 @@ from hashlib import md5
 import discord
 import httpx
 from ddgs import DDGS
-from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, BinaryContent, RunContext, Tool, UserContent
+from pydantic_ai.messages import (
+    MULTI_MODAL_CONTENT_TYPES,
+    ModelMessage,
+    ModelRequest,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from waku import common
 from waku.config import app_config
@@ -28,6 +34,11 @@ _discord_task: asyncio.Task | None = None
 _discord_agent: Agent[DiscordContextDeps, str] | None = None
 _warned_empty_content = False
 _server_list_view_registered = False
+_discord_image_send_lock: asyncio.Lock | None = None
+
+_DISCORD_IMAGE_BATCH_MAX = 3
+_DISCORD_IMAGE_SEND_DELAY_SECONDS = 3.0
+_DISCORD_IMAGE_BUSY_WAIT_SECONDS = 5
 
 _DISCORD_SERVER_LIST_RELOAD_ID = "waku:discord_server_list:reload"
 _DISCORD_SERVER_MENU_CACHE_KEY = "discord_server_menu_messages"
@@ -97,6 +108,10 @@ class DiscordAnimePhotoResult:
     success: bool = True
     message: str | None = None
     data: DiscordAnimePhotoInfo | None = None
+    sent_count: int = 0
+    requested_count: int = 1
+    capped_count: int | None = None
+    wait_seconds: int | None = None
 
 
 @dataclass
@@ -184,6 +199,14 @@ class DiscordWebImageResult:
 
 
 @dataclass
+class DiscordReactionResult:
+    success: bool = True
+    message: str | None = None
+    emoji: str | None = None
+    target_message_id: int | None = None
+
+
+@dataclass
 class _DiscordScheduledJob:
     job_id: str
     guild_id: int
@@ -191,6 +214,17 @@ class _DiscordScheduledJob:
     user_id: int
     run_time: datetime | None
     summary: str
+    kind: str = "message"
+    recurring: bool = False
+
+
+_DISCORD_SCHEDULE_PREFIXES = {
+    "discord_schedule_msg": ("message", False),
+    "discord_schedule_image": ("image", False),
+    "discord_schedule_repeat_msg": ("message", True),
+    "discord_schedule_repeat_image": ("image", True),
+}
+_DISCORD_MIN_REPEAT_SECONDS = 60
 
 
 def _clean_discord_job_id(job_id: str) -> str:
@@ -200,7 +234,7 @@ def _clean_discord_job_id(job_id: str) -> str:
 def _parse_discord_scheduled_job(job) -> _DiscordScheduledJob | None:
     job_id = _clean_discord_job_id(str(job.id))
     parts = job_id.split(":")
-    if len(parts) < 6 or parts[0] != "discord_schedule_msg":
+    if len(parts) < 6 or parts[0] not in _DISCORD_SCHEDULE_PREFIXES:
         return None
     try:
         guild_id = int(parts[1])
@@ -209,7 +243,13 @@ def _parse_discord_scheduled_job(job) -> _DiscordScheduledJob | None:
     except ValueError:
         return None
     args = list(getattr(job, "args", []) or [])
-    summary = str(args[1])[:120] if len(args) >= 2 else "message"
+    kind, recurring = _DISCORD_SCHEDULE_PREFIXES[parts[0]]
+    if kind == "image":
+        image_kind = str(args[1]) if len(args) >= 2 else "image"
+        query = str(args[2]) if len(args) >= 3 and args[2] else ""
+        summary = f"{image_kind} image {query}".strip()[:120]
+    else:
+        summary = str(args[2])[:120] if len(args) >= 3 else str(args[1])[:120] if len(args) >= 2 else "message"
     return _DiscordScheduledJob(
         job_id=job_id,
         guild_id=guild_id,
@@ -217,6 +257,8 @@ def _parse_discord_scheduled_job(job) -> _DiscordScheduledJob | None:
         user_id=user_id,
         run_time=getattr(job, "next_run_time", None),
         summary=summary,
+        kind=kind,
+        recurring=recurring,
     )
 
 
@@ -240,10 +282,44 @@ def _discord_scheduled_jobs(
 
 def _format_discord_scheduled_job(job: _DiscordScheduledJob, index: int) -> str:
     when = job.run_time.isoformat() if job.run_time else "unknown time"
-    return f"{index}. [{when}] <#{job.channel_id}> - {job.summary} - id={job.job_id}"
+    repeat = "repeat " if job.recurring else ""
+    return f"{index}. [{when}] <#{job.channel_id}> - {repeat}{job.kind}: {job.summary} - id={job.job_id}"
 
 
-async def _scheduled_discord_text_job(channel_id: int, text: str) -> None:
+def _discord_allowed_mentions(allow_everyone: bool = False) -> discord.AllowedMentions:
+    return discord.AllowedMentions(
+        users=True,
+        roles=False,
+        everyone=allow_everyone,
+    )
+
+
+def _discord_image_lock() -> asyncio.Lock:
+    global _discord_image_send_lock
+    if _discord_image_send_lock is None:
+        _discord_image_send_lock = asyncio.Lock()
+    return _discord_image_send_lock
+
+
+async def _scheduled_discord_text_job(
+    channel_id: int,
+    target_user_ids: int | list[int] | tuple[int, ...],
+    text: str,
+    allow_everyone: bool = False,
+    job_id: str | None = None,
+    repeat_until: str | None = None,
+) -> None:
+    if repeat_until:
+        try:
+            until = datetime.fromisoformat(repeat_until)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=UTC)
+            if datetime.now(UTC) > until.astimezone(UTC):
+                if job_id:
+                    common.jobqueue.remove_job(job_id)
+                return
+        except ValueError:
+            pass
     if _discord_client is None:
         logger.error("Scheduled Discord message failed: Discord client unavailable")
         return
@@ -261,10 +337,142 @@ async def _scheduled_discord_text_job(channel_id: int, text: str) -> None:
         logger.error(f"Scheduled Discord target is not messageable: channel={channel_id}")
         return
     try:
-        await channel.send(text)
+        reminder_text = text.strip()
+        if isinstance(target_user_ids, int):
+            user_ids = [target_user_ids]
+        else:
+            user_ids = [int(user_id) for user_id in target_user_ids]
+        mentions = [f"<@{user_id}>" for user_id in dict.fromkeys(user_ids) if user_id > 0]
+        prefix = " ".join(mention for mention in mentions if mention not in reminder_text)
+        if prefix:
+            reminder_text = f"{prefix} {reminder_text}"
+        await channel.send(
+            reminder_text,
+            allowed_mentions=_discord_allowed_mentions(allow_everyone),
+        )
         logger.debug(f"Scheduled Discord message sent successfully: channel={channel_id}")
     except Exception as e:
         logger.error(f"Scheduled Discord message failed: {e.__class__.__name__}: {e}")
+
+
+async def _scheduled_discord_image_job(
+    channel_id: int,
+    image_kind: str,
+    query: str | None = None,
+    caption: str | None = None,
+    allow_everyone: bool = False,
+    job_id: str | None = None,
+    repeat_until: str | None = None,
+    target_user_ids: int | list[int] | tuple[int, ...] | None = None,
+) -> None:
+    if repeat_until:
+        try:
+            until = datetime.fromisoformat(repeat_until)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=UTC)
+            if datetime.now(UTC) > until.astimezone(UTC):
+                if job_id:
+                    common.jobqueue.remove_job(job_id)
+                return
+        except ValueError:
+            pass
+    if _discord_client is None:
+        logger.error("Scheduled Discord image failed: Discord client unavailable")
+        return
+    channel = _discord_client.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await _discord_client.fetch_channel(channel_id)
+        except Exception as e:
+            logger.error(
+                "Scheduled Discord image failed to fetch channel: "
+                f"channel={channel_id} error={e.__class__.__name__}: {e}"
+            )
+            return
+    if not isinstance(channel, discord.abc.Messageable):
+        logger.error(f"Scheduled Discord image target is not messageable: channel={channel_id}")
+        return
+
+    caption_text = (caption or "").strip()
+    user_ids: list[int] = []
+    if isinstance(target_user_ids, int):
+        user_ids = [target_user_ids]
+    elif target_user_ids:
+        user_ids = [int(user_id) for user_id in target_user_ids]
+    mentions = [f"<@{user_id}>" for user_id in dict.fromkeys(user_ids) if user_id > 0]
+    mention_prefix = " ".join(mention for mention in mentions if mention not in caption_text)
+    caption_has_mention = any(mention in caption_text for mention in mentions)
+    send_caption_as_content = bool(mentions and caption_text)
+    if send_caption_as_content:
+        message_content = caption_text if caption_has_mention else f"{' '.join(mentions)} {caption_text}"
+        embed_caption_text = ""
+    else:
+        message_content = mention_prefix or None
+        embed_caption_text = caption_text
+    image_lock = _discord_image_lock()
+    if image_lock.locked():
+        logger.info(f"discord_image_queue_busy scheduled channel={channel_id} kind={image_kind}")
+        return
+    try:
+        async with image_lock:
+            if image_kind == "anime":
+                guild = getattr(channel, "guild", None)
+                r18_mode = await _discord_r18_mode(guild)
+                if manyacg_client is None:
+                    await channel.send("ManyACG is not configured, so Waku cannot send anime photos yet.")
+                    return
+                fetched = await _fetch_discord_anime_artwork((query or "").strip(), r18_mode=r18_mode)
+                if fetched is None:
+                    await channel.send("Could not fetch a scheduled anime image.")
+                    return
+                artwork, picture = fetched
+                embed = _discord_artwork_embed(
+                    title=artwork.title,
+                    source_url=artwork.source_url,
+                    image_url=picture.regular,
+                    r18=artwork.r18,
+                )
+                if embed_caption_text:
+                    embed.description = embed_caption_text[:4096]
+                await channel.send(
+                    content=message_content,
+                    embed=embed,
+                    allowed_mentions=_discord_allowed_mentions(allow_everyone),
+                )
+                logger.info(f"discord_image_send_success scheduled channel={channel_id} kind=anime")
+                return
+
+            search_query = (query or "anime image").strip()
+            results = await _search_web_images(search_query)
+            for result in results:
+                image_url = result.get("image") or result.get("thumbnail")
+                if not image_url:
+                    continue
+                downloaded = await _download_image_bytes(str(image_url))
+                if downloaded is None:
+                    continue
+                data, content_type = downloaded
+                file = discord.File(io.BytesIO(data), filename=_image_filename(content_type))
+                title = str(result.get("title") or search_query)
+                source_url = str(result.get("url") or image_url)
+                embed = discord.Embed(
+                    title=title[:256],
+                    url=source_url,
+                    description=embed_caption_text or f"Scheduled image: `{search_query[:120]}`",
+                    color=0x8AC5FF,
+                )
+                embed.set_image(url=f"attachment://{file.filename}")
+                await channel.send(
+                    content=message_content,
+                    embed=embed,
+                    file=file,
+                    allowed_mentions=_discord_allowed_mentions(allow_everyone),
+                )
+                logger.info(f"discord_image_send_success scheduled channel={channel_id} kind=web")
+                return
+            await channel.send("Could not find a downloadable scheduled image.")
+    except Exception as e:
+        logger.error(f"Scheduled Discord image failed: {e.__class__.__name__}: {e}")
 
 
 @dataclass
@@ -278,6 +486,11 @@ async def schedule_discord_message(
     schedule_time: str | None,
     text: str,
     send_immediately: bool = False,
+    target_user_ids: list[int] | None = None,
+    repeat_every_seconds: int | None = None,
+    repeat_until: str | None = None,
+    target_channel_id: int | None = None,
+    allow_everyone: bool = False,
 ) -> DiscordScheduleResult:
     """Schedule a text message/reminder in the current Discord channel.
 
@@ -289,6 +502,14 @@ async def schedule_discord_message(
         schedule_time: ISO 8601 datetime string in the future.
         text: Reminder/message text to send.
         send_immediately: If True, send text immediately without scheduling.
+        target_user_ids: Discord user IDs to mention when the reminder fires.
+            Use IDs from explicit user mentions/lookup in the user's request. If
+            omitted, the tool mentions explicit non-bot users in the current
+            message, otherwise the requester.
+        repeat_every_seconds: Bot-admin-only repeat interval in seconds.
+        repeat_until: Bot-admin-only ISO 8601 end time for recurring schedules.
+        target_channel_id: Bot-admin-only target channel ID for cross-channel sends.
+        allow_everyone: Bot-admin-only permission to allow @everyone/@here mentions.
     """
     message = ctx.deps.message
     if message.guild is None:
@@ -296,8 +517,43 @@ async def schedule_discord_message(
     if not text or not text.strip():
         return DiscordScheduleResult(success=False, message="Reminder text is required.")
 
+    is_admin = _is_discord_bot_admin(message)
+    target_channel = await _resolve_discord_channel(message, target_channel_id)
+    if target_channel is None or not isinstance(target_channel, discord.abc.Messageable):
+        return DiscordScheduleResult(success=False, message="Target channel is not messageable or was not found.")
+    target_channel_actual_id = getattr(target_channel, "id", message.channel.id)
+    cross_channel = target_channel_actual_id != message.channel.id
+    if cross_channel and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can schedule messages in another channel.")
+    if repeat_every_seconds is not None and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can create recurring Discord schedules.")
+    if allow_everyone and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can schedule @everyone/@here mentions.")
+    if ("@everyone" in text or "@here" in text) and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can schedule @everyone/@here mentions.")
+
+    target_ids = list(target_user_ids or [])
+    bot_user_id = _discord_client.user.id if _discord_client and _discord_client.user else None
+    if not target_ids:
+        target_ids = [
+            user.id
+            for user in message.mentions
+            if not user.bot and user.id != bot_user_id
+        ]
+    if not target_ids:
+        target_ids = [message.author.id]
+    target_ids = list(dict.fromkeys(target_ids))
+
     if send_immediately:
-        await message.channel.send(text.strip(), reference=message)
+        mention_prefix = " ".join(f"<@{user_id}>" for user_id in target_ids)
+        immediate_text = text.strip()
+        if mention_prefix and not any(f"<@{user_id}>" in immediate_text for user_id in target_ids):
+            immediate_text = f"{mention_prefix} {immediate_text}"
+        await target_channel.send(
+            immediate_text,
+            reference=message if not cross_channel else None,
+            allowed_mentions=_discord_allowed_mentions(allow_everyone),
+        )
         return DiscordScheduleResult(success=True, message="Message sent.")
 
     if not schedule_time:
@@ -306,22 +562,59 @@ async def schedule_discord_message(
         schedule_datetime = datetime.fromisoformat(schedule_time)
     except ValueError as e:
         return DiscordScheduleResult(success=False, message=f"Invalid schedule_time: {e}")
+    local_tz = datetime.now().astimezone().tzinfo or UTC
     if schedule_datetime.tzinfo is None:
-        schedule_datetime = schedule_datetime.replace(tzinfo=UTC)
+        schedule_datetime = schedule_datetime.replace(tzinfo=local_tz)
+    schedule_datetime = schedule_datetime.astimezone(UTC)
     if schedule_datetime < datetime.now(UTC):
         return DiscordScheduleResult(success=False, message="schedule_time must be in the future.")
 
+    until_datetime: datetime | None = None
+    if repeat_every_seconds is not None:
+        if repeat_every_seconds < _DISCORD_MIN_REPEAT_SECONDS:
+            return DiscordScheduleResult(success=False, message=f"repeat_every_seconds must be at least {_DISCORD_MIN_REPEAT_SECONDS}.")
+        if not repeat_until:
+            return DiscordScheduleResult(success=False, message="repeat_until is required for recurring schedules.")
+        try:
+            until_datetime = datetime.fromisoformat(repeat_until)
+        except ValueError as e:
+            return DiscordScheduleResult(success=False, message=f"Invalid repeat_until: {e}")
+        if until_datetime.tzinfo is None:
+            until_datetime = until_datetime.replace(tzinfo=local_tz)
+        until_datetime = until_datetime.astimezone(UTC)
+        if until_datetime <= schedule_datetime:
+            return DiscordScheduleResult(success=False, message="repeat_until must be after schedule_time.")
+
     text_content = text.strip()
+    prefix = "discord_schedule_repeat_msg" if repeat_every_seconds else "discord_schedule_msg"
     job_key = (
-        f"discord_schedule_msg:{message.guild.id}:{message.channel.id}:{message.author.id}"
+        f"{prefix}:{message.guild.id}:{target_channel_actual_id}:{message.author.id}"
         f":{schedule_datetime.timestamp()}:{md5(text_content.encode()).hexdigest()}"
     )
-    common.jobqueue.add_onetime_job(
+    args = [
+        target_channel_actual_id,
+        target_ids,
+        text_content,
+        allow_everyone,
         job_key,
-        run_date=schedule_datetime,
-        func=_scheduled_discord_text_job,
-        args=[message.channel.id, text_content],
-    )
+        until_datetime.isoformat() if until_datetime else None,
+    ]
+    if repeat_every_seconds:
+        common.jobqueue.add_interval_job(
+            job_key,
+            func=_scheduled_discord_text_job,
+            seconds=repeat_every_seconds,
+            start_date=schedule_datetime.isoformat(),
+            end_date=until_datetime.isoformat() if until_datetime else None,
+            args=args,
+        )
+    else:
+        common.jobqueue.add_onetime_job(
+            job_key,
+            run_date=schedule_datetime,
+            func=_scheduled_discord_text_job,
+            args=args,
+        )
     logger.info(
         "Discord reminder scheduled: "
         f"guild={message.guild.id} channel={message.channel.id} "
@@ -329,26 +622,185 @@ async def schedule_discord_message(
     )
     return DiscordScheduleResult(
         success=True,
-        message=f"Scheduled for {schedule_datetime.isoformat()}",
+        message=(
+            f"{'Recurring schedule' if repeat_every_seconds else 'Scheduled'} for "
+            f"{schedule_datetime.isoformat()} in <#{target_channel_actual_id}>"
+        ),
+    )
+
+
+async def schedule_discord_image_action(
+    ctx: RunContext[DiscordContextDeps],
+    schedule_time: str | None,
+    image_kind: str = "anime",
+    query: str | None = None,
+    caption: str | None = None,
+    repeat_every_seconds: int | None = None,
+    repeat_until: str | None = None,
+    target_channel_id: int | None = None,
+    allow_everyone: bool = False,
+    target_user_ids: list[int] | None = None,
+) -> DiscordScheduleResult:
+    """Schedule a Discord image send action.
+
+    Use this when the user asks Waku to send images later or repeatedly. If the
+    user just says "send an image/photo/ảnh" without explicitly saying web/internet
+    search, keep `image_kind="anime"` so the default anime image API is used.
+    Only set `image_kind="web"` when the user clearly asks for web/internet image
+    search. Recurring image schedules and cross-channel targets are bot-admin
+    only. `image_kind` must be "anime" or "web".
+
+    Args:
+        schedule_time: ISO 8601 first send time.
+        image_kind: "anime" for the default anime/API image, or "web" only when
+            the user explicitly asks for web/internet image search.
+        query: Optional image search keyword.
+        caption: Optional text/caption to include in the scheduled image embed.
+        repeat_every_seconds: Bot-admin-only repeat interval in seconds.
+        repeat_until: Bot-admin-only ISO 8601 end time for recurring schedules.
+        target_channel_id: Bot-admin-only target channel ID for cross-channel sends.
+        allow_everyone: Bot-admin-only permission to allow @everyone/@here mentions.
+        target_user_ids: Discord user IDs to mention when the scheduled image is sent.
+            Use this when the user asks Waku to call/tag/invite/gửi tặng a user
+            for the image. If omitted, explicit non-bot mentions in the current
+            message and user mentions included in the caption are used as targets.
+            When the request is a gift/tặng image to a person, always provide this
+            and write an agent-authored caption/greeting for that person.
+    """
+    message = ctx.deps.message
+    if message.guild is None:
+        return DiscordScheduleResult(success=False, message="Scheduling is only available in servers.")
+    if image_kind not in {"anime", "web"}:
+        return DiscordScheduleResult(success=False, message="image_kind must be 'anime' or 'web'.")
+    if not schedule_time:
+        return DiscordScheduleResult(success=False, message="A future schedule_time is required.")
+
+    is_admin = _is_discord_bot_admin(message)
+    target_channel = await _resolve_discord_channel(message, target_channel_id)
+    if target_channel is None or not isinstance(target_channel, discord.abc.Messageable):
+        return DiscordScheduleResult(success=False, message="Target channel is not messageable or was not found.")
+    target_channel_actual_id = getattr(target_channel, "id", message.channel.id)
+    if target_channel_actual_id != message.channel.id and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can schedule images in another channel.")
+    if repeat_every_seconds is not None and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can create recurring Discord image schedules.")
+    if allow_everyone and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can schedule @everyone/@here mentions.")
+    caption_text = (caption or "").strip()
+    if ("@everyone" in caption_text or "@here" in caption_text) and not is_admin:
+        return DiscordScheduleResult(success=False, message="Only bot admins can schedule @everyone/@here mentions.")
+
+    target_ids = list(target_user_ids or [])
+    bot_user_id = _discord_client.user.id if _discord_client and _discord_client.user else None
+    if caption_text:
+        target_ids.extend(int(user_id) for user_id in re.findall(r"<@!?(\d+)>", caption_text))
+    if not target_ids:
+        target_ids = [
+            user.id
+            for user in message.mentions
+            if not user.bot and user.id != bot_user_id
+        ]
+    target_ids = [user_id for user_id in dict.fromkeys(target_ids) if user_id != bot_user_id]
+
+    try:
+        schedule_datetime = datetime.fromisoformat(schedule_time)
+    except ValueError as e:
+        return DiscordScheduleResult(success=False, message=f"Invalid schedule_time: {e}")
+    local_tz = datetime.now().astimezone().tzinfo or UTC
+    if schedule_datetime.tzinfo is None:
+        schedule_datetime = schedule_datetime.replace(tzinfo=local_tz)
+    schedule_datetime = schedule_datetime.astimezone(UTC)
+    if schedule_datetime < datetime.now(UTC):
+        return DiscordScheduleResult(success=False, message="schedule_time must be in the future.")
+
+    until_datetime: datetime | None = None
+    if repeat_every_seconds is not None:
+        if repeat_every_seconds < _DISCORD_MIN_REPEAT_SECONDS:
+            return DiscordScheduleResult(success=False, message=f"repeat_every_seconds must be at least {_DISCORD_MIN_REPEAT_SECONDS}.")
+        if not repeat_until:
+            return DiscordScheduleResult(success=False, message="repeat_until is required for recurring schedules.")
+        try:
+            until_datetime = datetime.fromisoformat(repeat_until)
+        except ValueError as e:
+            return DiscordScheduleResult(success=False, message=f"Invalid repeat_until: {e}")
+        if until_datetime.tzinfo is None:
+            until_datetime = until_datetime.replace(tzinfo=local_tz)
+        until_datetime = until_datetime.astimezone(UTC)
+        if until_datetime <= schedule_datetime:
+            return DiscordScheduleResult(success=False, message="repeat_until must be after schedule_time.")
+
+    query_text = (query or "").strip()
+    hash_source = f"{image_kind}:{query_text}:{caption_text}"
+    prefix = "discord_schedule_repeat_image" if repeat_every_seconds else "discord_schedule_image"
+    job_key = (
+        f"{prefix}:{message.guild.id}:{target_channel_actual_id}:{message.author.id}"
+        f":{schedule_datetime.timestamp()}:{md5(hash_source.encode()).hexdigest()}"
+    )
+    args = [
+        target_channel_actual_id,
+        image_kind,
+        query_text,
+        caption_text,
+        allow_everyone,
+        job_key,
+        until_datetime.isoformat() if until_datetime else None,
+        target_ids,
+    ]
+    if repeat_every_seconds:
+        common.jobqueue.add_interval_job(
+            job_key,
+            func=_scheduled_discord_image_job,
+            seconds=repeat_every_seconds,
+            start_date=schedule_datetime.isoformat(),
+            end_date=until_datetime.isoformat() if until_datetime else None,
+            args=args,
+        )
+    else:
+        common.jobqueue.add_onetime_job(
+            job_key,
+            run_date=schedule_datetime,
+            func=_scheduled_discord_image_job,
+            args=args,
+        )
+    logger.info(
+        "Discord image schedule created: "
+        f"guild={message.guild.id} channel={target_channel_actual_id} user={message.author.id} "
+        f"kind={image_kind} repeat={repeat_every_seconds} time={schedule_datetime.isoformat()}"
+    )
+    return DiscordScheduleResult(
+        success=True,
+        message=(
+            f"{'Recurring image schedule' if repeat_every_seconds else 'Image scheduled'} for "
+            f"{schedule_datetime.isoformat()} in <#{target_channel_actual_id}>"
+        ),
     )
 
 
 async def list_discord_scheduled_messages(
-    ctx: RunContext[DiscordContextDeps], only_mine: bool = False
+    ctx: RunContext[DiscordContextDeps], only_mine: bool = False, include_all: bool = False
 ) -> str:
-    """List pending Discord reminders/scheduled messages in this server."""
+    """List pending Discord reminders/scheduled messages in this server.
+
+    Args:
+        only_mine: If True, list only schedules created by the requester.
+        include_all: Bot-admin-only flag for listing every schedule in the server.
+            Use this when an admin asks for all current schedules/reminders.
+    """
     message = ctx.deps.message
     if message.guild is None:
         return "Scheduling is only available in servers."
-    user_id = message.author.id if only_mine else None
+    if include_all and not _is_discord_bot_admin(message):
+        return "Chỉ bot admin mới xem được toàn bộ lịch hẹn của server."
+    user_id = message.author.id if only_mine and not include_all else None
     jobs = _discord_scheduled_jobs(message.guild.id, user_id=user_id)
     if not jobs:
         return "Không có lịch hẹn nào trong server này."
+    title = "Toàn bộ lịch hẹn Discord hiện tại" if include_all else "Lịch hẹn Discord hiện tại"
     lines = [
         _format_discord_scheduled_job(job, index)
         for index, job in enumerate(jobs, start=1)
     ]
-    return "Lịch hẹn Discord hiện tại:\n" + "\n".join(lines[:20])
+    return f"{title}:\n" + "\n".join(lines[:50])
 
 
 async def cancel_discord_scheduled_message(
@@ -435,6 +887,10 @@ async def _history_key(message: discord.Message) -> str:
 
 def _waiting_key(user_id: int) -> str:
     return f"discord_agent_waiting:{user_id}"
+
+
+def _discord_dm_config_id(user_id: int) -> int:
+    return -abs(int(user_id))
 
 
 async def _discord_guild_settings(guild: discord.Guild | None) -> DiscordGuildSettings:
@@ -525,6 +981,55 @@ async def _delete_discord_guild_settings_by_id(guild_id: int) -> None:
     await common.memttlcache.delete(f"chat_config:{guild_id}")
 
 
+async def _discord_dm_settings(user: discord.abc.User) -> DiscordGuildSettings:
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    dm_id = _discord_dm_config_id(user.id)
+    try:
+        async with AsyncSessionFactory() as session:
+            chat = await session.get(ChatData, dm_id)
+            if chat is None:
+                return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True)
+            config = chat.chat_config
+        return DiscordGuildSettings(
+            enabled=True,
+            r18_mode=0,
+            ai_reply=config.discord_ai_reply,
+        )
+    except Exception as e:
+        logger.error(f"Failed to load Discord DM settings from DB: user={user.id} error={e}")
+        return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True)
+
+
+async def _set_discord_dm_settings(
+    user: discord.abc.User, settings: DiscordGuildSettings
+) -> None:
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    dm_id = _discord_dm_config_id(user.id)
+    async with AsyncSessionFactory() as session:
+        chat = await session.get(ChatData, dm_id)
+        if chat is None:
+            chat = ChatData(id=dm_id, title=f"Discord DM {user}", username=str(user))
+            session.add(chat)
+            await session.flush()
+        config = chat.chat_config
+        config.discord_enabled = True
+        config.discord_muted = False
+        config.discord_allow_r18 = False
+        config.discord_r18_mode = 0
+        config.discord_ai_reply = settings.ai_reply
+        chat.chat_config = config
+        await session.commit()
+    await common.memttlcache.delete(f"chat_config:{dm_id}")
+
+
+async def _discord_dm_ai_reply_enabled(user: discord.abc.User) -> bool:
+    return (await _discord_dm_settings(user)).ai_reply
+
+
 async def _discord_r18_mode(guild: discord.Guild | None) -> int:
     return (await _discord_guild_settings(guild)).r18_mode
 
@@ -551,6 +1056,28 @@ def _emoji_key(message: discord.Message) -> str:
     return f"discord_emoji_style:{guild_part}:{message.author.id}"
 
 
+def _reaction_key(message: discord.Message) -> str:
+    guild_part = message.guild.id if message.guild else "dm"
+    return f"discord_reaction_style:{guild_part}:{message.author.id}"
+
+
+def _reaction_counter_key(message: discord.Message) -> str:
+    channel_id = getattr(message.channel, "id", "dm")
+    return f"discord_periodic_reaction_counter:{channel_id}:{message.author.id}"
+
+
+def _discord_reaction_candidates(message: discord.Message) -> list[str]:
+    content = _message_text(message)
+    candidates = _CUSTOM_EMOJI_RE.findall(content) + _EMOJI_RE.findall(content)
+    for reaction in getattr(message, "reactions", []):
+        emoji = getattr(reaction, "emoji", None)
+        if isinstance(emoji, str):
+            candidates.append(emoji)
+        elif isinstance(emoji, discord.PartialEmoji | discord.Emoji):
+            candidates.append(str(emoji))
+    return candidates
+
+
 async def _remember_discord_emojis(message: discord.Message) -> None:
     content = _message_text(message)
     emojis = _CUSTOM_EMOJI_RE.findall(content) + _EMOJI_RE.findall(content)
@@ -559,6 +1086,16 @@ async def _remember_discord_emojis(message: discord.Message) -> None:
     key = _emoji_key(message)
     existing: list[str] = await common.memttlcache.get(key, [])
     merged = (existing + emojis)[-40:]
+    await common.memttlcache.set(key, merged, ttl=7 * 24 * 60 * 60)
+
+
+async def _remember_discord_reaction_style(message: discord.Message) -> None:
+    reactions = _discord_reaction_candidates(message)
+    if not reactions:
+        return
+    key = _reaction_key(message)
+    existing: list[str] = await common.memttlcache.get(key, [])
+    merged = (existing + reactions)[-60:]
     await common.memttlcache.set(key, merged, ttl=7 * 24 * 60 * 60)
 
 
@@ -572,12 +1109,22 @@ async def _discord_emoji_hint(message: discord.Message) -> str | None:
     return "User/server emoji style: " + " ".join(common_emojis)
 
 
+async def _discord_reaction_hint(message: discord.Message) -> str | None:
+    reactions: list[str] = await common.memttlcache.get(_reaction_key(message), [])
+    if not reactions:
+        return None
+    common_reactions = [emoji for emoji, _ in Counter(reactions).most_common(10)]
+    if not common_reactions:
+        return None
+    return "Discord reaction style: " + " ".join(common_reactions)
+
+
 def _is_discord_user_bot_admin(user: discord.abc.User) -> bool:
     return user.id in set(app_config.owners) | set(app_config.discord_admin_users)
 
 
 def _is_discord_bot_admin(message: discord.Message) -> bool:
-    return _is_discord_user_bot_admin(message.author)
+    return _is_discord_user_bot_admin(message.author) or _is_discord_server_admin(message)
 
 
 def _is_discord_server_admin(message: discord.Message) -> bool:
@@ -767,6 +1314,9 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
         and not setu_command
         and not artwork_url
     ):
+        return False, ""
+    if is_dm and not await _discord_dm_ai_reply_enabled(message.author):
+        logger.debug(f"Discord DM AI reply ignored because it is disabled: user={message.author.id}")
         return False, ""
     if not is_dm and not await _channel_allowed(message):
         logger.debug(
@@ -997,11 +1547,97 @@ async def _reply_context(message: discord.Message) -> str | None:
     if isinstance(replied, discord.Message):
         text = _clean_content(replied)
         if text:
-            return f"Replying to {_author_name(replied)}: {text[:1000]}"
+            return (
+                f"Referenced message to use as source/instructions, not as the requester/target: "
+                f"author={_author_name(replied)} text={text[:1000]}"
+            )
     return None
 
 
-async def _build_prompt(message: discord.Message, user_prompt: str) -> str:
+_DISCORD_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_DISCORD_MEDIA_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _discord_media_enabled() -> bool:
+    return app_config.agent_multimodal and "photo" in app_config.agent_multimodal_inputs
+
+
+async def _download_discord_media(url: str) -> tuple[bytes, str] | None:
+    timeout = httpx.Timeout(12.0, connect=6.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with client.stream("GET", url, headers={"User-Agent": "WakuDiscordBot/1.0"}) as response:
+            if response.status_code >= 400:
+                return None
+            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+            if content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
+                return None
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > _DISCORD_MEDIA_MAX_BYTES:
+                    return None
+            return bytes(data), content_type
+
+
+async def _discord_attachment_contents(
+    message: discord.Message, label: str = "attachment"
+) -> tuple[list[str], list[UserContent]]:
+    summaries: list[str] = []
+    contents: list[UserContent] = []
+    if not message.attachments:
+        return summaries, contents
+    for attachment in message.attachments[:4]:
+        content_type = (attachment.content_type or "").split(";", 1)[0].lower()
+        size_kb = max(1, int((attachment.size or 0) / 1024))
+        summaries.append(
+            f"- {label}: {attachment.filename} type={content_type or 'unknown'} size={size_kb}KB"
+        )
+        if not _discord_media_enabled() or content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
+            continue
+        if attachment.size and attachment.size > _DISCORD_MEDIA_MAX_BYTES:
+            summaries.append(f"  skipped: file is larger than {_DISCORD_MEDIA_MAX_BYTES // 1024 // 1024}MB")
+            continue
+        try:
+            data = await attachment.read(use_cached=True)
+        except Exception as e:
+            logger.debug(f"Discord attachment download failed: {e.__class__.__name__}: {e}")
+            downloaded = await _download_discord_media(attachment.url)
+            if downloaded is None:
+                continue
+            data, content_type = downloaded
+        if len(data) <= _DISCORD_MEDIA_MAX_BYTES:
+            contents.append(BinaryContent(data=data, media_type=content_type))
+    return summaries, contents
+
+
+async def _discord_sticker_contents(
+    message: discord.Message, label: str = "sticker"
+) -> tuple[list[str], list[UserContent]]:
+    summaries: list[str] = []
+    contents: list[UserContent] = []
+    if not message.stickers:
+        return summaries, contents
+    for sticker in message.stickers[:3]:
+        sticker_format = getattr(sticker, "format", None)
+        summaries.append(f"- {label}: {sticker.name} format={sticker_format}")
+        if not _discord_media_enabled():
+            continue
+        url = getattr(sticker, "url", None)
+        if not url:
+            continue
+        try:
+            downloaded = await _download_discord_media(str(url))
+        except Exception as e:
+            logger.debug(f"Discord sticker download failed: {e.__class__.__name__}: {e}")
+            continue
+        if downloaded is None:
+            continue
+        data, content_type = downloaded
+        contents.append(BinaryContent(data=data, media_type=content_type))
+    return summaries, contents
+
+
+async def _build_prompt(message: discord.Message, user_prompt: str) -> tuple[list[UserContent], bool]:
     parts = [
         "ContextInfo[Discord chat]",
         f"Server: {_guild_name(message)}",
@@ -1010,14 +1646,68 @@ async def _build_prompt(message: discord.Message, user_prompt: str) -> str:
         f"Current time: {datetime.now().isoformat(timespec='seconds')}",
     ]
     reply_ctx = await _reply_context(message)
+    replied = message.reference.resolved if message.reference else None
     if reply_ctx:
         parts.append(reply_ctx)
     emoji_hint = await _discord_emoji_hint(message)
     if emoji_hint:
         parts.append(emoji_hint)
+    reaction_hint = await _discord_reaction_hint(message)
+    if reaction_hint:
+        parts.append(reaction_hint)
+    mentioned_users = [user for user in message.mentions if not user.bot]
+    if mentioned_users:
+        parts.append("Mentioned Discord users in the current message:")
+        for user in mentioned_users[:10]:
+            nick = getattr(user, "nick", None)
+            global_name = getattr(user, "global_name", None)
+            parts.append(
+                f"- id={user.id} mention=<@{user.id}> name={user.name} "
+                f"display={user.display_name} global={global_name or ''} nick={nick or ''}"
+            )
+        parts.append(
+            "If the user asks to tag/remind one of these users, use the id above for target_user_ids even if their @name is missing from the cleaned text."
+        )
+    attachment_summaries, attachment_contents = await _discord_attachment_contents(message)
+    sticker_summaries, sticker_contents = await _discord_sticker_contents(message)
+    replied_attachment_summaries: list[str] = []
+    replied_attachment_contents: list[UserContent] = []
+    replied_sticker_summaries: list[str] = []
+    replied_sticker_contents: list[UserContent] = []
+    if isinstance(replied, discord.Message):
+        replied_attachment_summaries, replied_attachment_contents = await _discord_attachment_contents(
+            replied, label="replied attachment"
+        )
+        replied_sticker_summaries, replied_sticker_contents = await _discord_sticker_contents(
+            replied, label="replied sticker"
+        )
+    media_summaries = (
+        attachment_summaries
+        + sticker_summaries
+        + replied_attachment_summaries
+        + replied_sticker_summaries
+    )
+    if media_summaries:
+        parts.append("User/replied media:")
+        parts.extend(media_summaries)
+        if replied_attachment_contents or replied_sticker_contents:
+            parts.append(
+                "The user is replying to a message that contains media. Treat that replied media as the image/sticker they want analyzed; do not send a new image unless explicitly asked."
+            )
     parts.append("User message:")
-    parts.append(user_prompt)
-    return "\n".join(parts)
+    parts.append(user_prompt or "[No text message]")
+    contents: list[UserContent] = ["\n".join(parts)]
+    contents.extend(attachment_contents)
+    contents.extend(sticker_contents)
+    contents.extend(replied_attachment_contents)
+    contents.extend(replied_sticker_contents)
+    needs_multimodal = bool(
+        attachment_contents
+        or sticker_contents
+        or replied_attachment_contents
+        or replied_sticker_contents
+    )
+    return contents, needs_multimodal
 
 
 def _split_reply(text: str) -> list[str]:
@@ -1050,7 +1740,11 @@ async def _send_reply(message: discord.Message, text: str) -> None:
     for index, chunk in enumerate(chunks):
         if len(chunk) > 1900:
             chunk = chunk[:1900] + "…"
-        await message.channel.send(chunk, reference=message if index == 0 else None)
+        await message.channel.send(
+            chunk,
+            reference=message if index == 0 else None,
+            mention_author=False,
+        )
         if index < len(chunks) - 1:
             await asyncio.sleep(random.uniform(delay_min, delay_max) + len(chunk) / 900)
 
@@ -1076,6 +1770,60 @@ def _sanitize_discord_history(messages: list[ModelMessage]) -> list[ModelMessage
     if removed:
         logger.debug(f"Discord history sanitized: removed {removed} tool messages")
     return cleaned
+
+
+def _strip_multimodal_history_for_text_model(
+    history: list[ModelMessage],
+) -> list[ModelMessage]:
+    """Return Discord history safe for text-only providers.
+
+    After a Discord image/sticker turn, pydantic-ai stores multimodal parts in
+    history. If the next turn goes back to a text-only model, providers like
+    DeepSeek reject old `image_url` payloads. Keep the dialog shape but replace
+    binary/image parts with a short text marker, matching Telegram's behavior.
+    """
+    sanitized: list[ModelMessage] = []
+    replaced = 0
+    for msg in history:
+        if not isinstance(msg, ModelRequest):
+            sanitized.append(msg)
+            continue
+
+        changed = False
+        parts = []
+        for part in msg.parts:
+            if isinstance(part, UserPromptPart) and isinstance(part.content, list):
+                content = []
+                for item in part.content:
+                    if isinstance(item, MULTI_MODAL_CONTENT_TYPES):
+                        content.append("[multimodal content omitted from text-model history]")
+                        changed = True
+                        replaced += 1
+                    else:
+                        content.append(item)
+                parts.append(UserPromptPart(content=content, timestamp=part.timestamp))
+            elif isinstance(part, ToolReturnPart) and part.has_content and isinstance(
+                part.content,
+                MULTI_MODAL_CONTENT_TYPES,
+            ):
+                changed = True
+                replaced += 1
+                parts.append(
+                    ToolReturnPart(
+                        tool_name=part.tool_name,
+                        content="[multimodal tool content omitted from text-model history]",
+                        tool_call_id=part.tool_call_id,
+                        metadata=part.metadata,
+                        timestamp=part.timestamp,
+                        outcome=part.outcome,
+                    )
+                )
+            else:
+                parts.append(part)
+        sanitized.append(ModelRequest(parts=parts) if changed else msg)
+    if replaced:
+        logger.debug(f"Discord history sanitized: replaced {replaced} multimodal items")
+    return sanitized
 
 
 def _discord_artwork_view(source_url: str, original_url: str | None = None) -> discord.ui.View:
@@ -1177,10 +1925,22 @@ async def _send_discord_image_embed(
     view: discord.ui.View | None = None,
     *,
     spoiler: bool = False,
+    channel: discord.abc.Messageable | None = None,
+    content: str | None = None,
+    allowed_mentions: discord.AllowedMentions | None = None,
+    reference: discord.Message | None = None,
 ) -> bool:
+    target_channel = channel or message.channel
     if not spoiler:
         embed.set_image(url=image_url)
-        await message.channel.send(embed=embed, view=view, reference=message)
+        await target_channel.send(
+            content=content,
+            embed=embed,
+            view=view,
+            reference=reference,
+            allowed_mentions=allowed_mentions,
+            mention_author=False,
+        )
         return True
 
     downloaded = await _download_image_bytes(image_url)
@@ -1191,7 +1951,14 @@ async def _send_discord_image_embed(
     data, content_type = downloaded
     filename = "SPOILER_" + _image_filename(content_type)
     file = discord.File(io.BytesIO(data), filename=filename, spoiler=True)
-    await message.channel.send(file=file, view=view, reference=message)
+    await target_channel.send(
+        content=content,
+        file=file,
+        view=view,
+        reference=reference,
+        allowed_mentions=allowed_mentions,
+        mention_author=False,
+    )
     return True
 
 
@@ -1199,6 +1966,12 @@ async def _send_discord_anime_photo_card(
     message: discord.Message,
     artwork: manyacg_service.Artwork,
     picture: manyacg_service.Picture,
+    *,
+    channel: discord.abc.Messageable | None = None,
+    content: str | None = None,
+    caption: str | None = None,
+    allowed_mentions: discord.AllowedMentions | None = None,
+    reference: discord.Message | None = None,
 ) -> bool:
     original_url = f"https://t.me/{app_config.manyacg_bot}/?start=file_{picture.id}"
     embed = _discord_artwork_embed(
@@ -1207,12 +1980,19 @@ async def _send_discord_anime_photo_card(
         image_url="",
         r18=artwork.r18,
     )
+    caption_text = (caption or "").strip()
+    if caption_text:
+        embed.description = caption_text[:4096]
     success = await _send_discord_image_embed(
         message,
         embed,
         picture.regular,
         _discord_artwork_view(artwork.source_url, original_url),
         spoiler=artwork.r18,
+        channel=channel,
+        content=content,
+        allowed_mentions=allowed_mentions,
+        reference=reference,
     )
     if success:
         logger.info(
@@ -1227,6 +2007,74 @@ async def _send_discord_anime_photo_card(
             f"title={artwork.title!r} r18={artwork.r18}"
         )
     return success
+
+
+async def send_discord_reaction(
+    ctx: RunContext[DiscordContextDeps],
+    emoji: str,
+    target_message_id: int | None = None,
+) -> DiscordReactionResult:
+    """Add a Discord reaction emoji to the current user's message.
+
+    Prefer common Unicode reactions such as 👍, ❤️, 😂, 😭, 🔥, 🎉, 👏, 👀,
+    🤔, 😡, 🥰, 😮, or 🙏. You may use a learned custom Discord emoji only
+    when it appears in Discord reaction style context.
+
+    Args:
+        emoji: The reaction emoji to add.
+        target_message_id: Optional message ID in the same channel. Defaults to
+            the current user's message.
+    """
+    message = ctx.deps.message
+    emoji_text = (emoji or "").strip()
+    if not emoji_text:
+        return DiscordReactionResult(success=False, message="Reaction emoji is empty.")
+
+    target = message
+    if target_message_id is not None and target_message_id != message.id:
+        try:
+            target = await message.channel.fetch_message(target_message_id)
+        except Exception as e:
+            logger.warning(
+                "Discord reaction target fetch failed: "
+                f"channel={message.channel.id} target_message_id={target_message_id} "
+                f"error={e.__class__.__name__}: {e}"
+            )
+            return DiscordReactionResult(
+                success=False,
+                message="Could not find the target message to react to.",
+                emoji=emoji_text,
+                target_message_id=target_message_id,
+            )
+
+    try:
+        reaction_emoji: str | discord.PartialEmoji = emoji_text
+        if _CUSTOM_EMOJI_RE.fullmatch(emoji_text):
+            reaction_emoji = discord.PartialEmoji.from_str(emoji_text)
+        await target.add_reaction(reaction_emoji)
+        await _remember_discord_reaction_style(message)
+        logger.info(
+            "Discord reaction sent: "
+            f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+            f"user={message.author.id} target_message_id={target.id} emoji={emoji_text!r}"
+        )
+        return DiscordReactionResult(
+            success=True,
+            emoji=emoji_text,
+            target_message_id=target.id,
+        )
+    except Exception as e:
+        logger.warning(
+            "Discord reaction failed: "
+            f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+            f"user={message.author.id} emoji={emoji_text!r} error={e.__class__.__name__}: {e}"
+        )
+        return DiscordReactionResult(
+            success=False,
+            message=f"Failed to add reaction: {e.__class__.__name__}",
+            emoji=emoji_text,
+            target_message_id=target.id,
+        )
 
 
 async def get_discord_server_info(
@@ -1275,6 +2123,59 @@ async def get_discord_server_info(
             owner_mention=f"<@{owner_id}>" if owner_id else None,
             current_channel=_channel_info(message.channel),
             channels=channels,
+        ),
+    )
+
+
+async def find_discord_channel(
+    ctx: RunContext[DiscordContextDeps], query: str, limit: int = 5
+) -> DiscordServerInfoResult:
+    """Find visible Discord channels in the current server.
+
+    Use this before cross-channel scheduling when the user names a channel by
+    mention, ID, or fuzzy name such as "thông báo" or "chat". If multiple
+    channels match, ask the user to confirm which returned channel to use.
+
+    Args:
+        query: Channel mention, ID, or name text.
+        limit: Maximum number of matching channels to return.
+    """
+    message = ctx.deps.message
+    guild = message.guild
+    if guild is None:
+        return DiscordServerInfoResult(success=False, message="This is a DM, so there are no server channels.")
+    normalized = query.strip().casefold().lstrip("#")
+    query_id = _extract_discord_id(query)
+    max_results = max(1, min(limit, 10))
+    matches: list[DiscordChannelInfo] = []
+    for channel in guild.channels:
+        if not _can_view_channel(channel, guild):
+            continue
+        channel_id = getattr(channel, "id", 0)
+        name = str(getattr(channel, "name", ""))
+        if query_id is not None:
+            is_match = channel_id == query_id
+        elif not normalized:
+            is_match = True
+        else:
+            name_folded = name.casefold()
+            is_match = normalized == name_folded or normalized in name_folded
+        if is_match:
+            matches.append(_channel_info(channel))
+            if len(matches) >= max_results:
+                break
+    if not matches:
+        return DiscordServerInfoResult(success=False, message=f"No Discord channels found for query: {query!r}.")
+    return DiscordServerInfoResult(
+        success=True,
+        data=DiscordServerInfo(
+            id=guild.id,
+            name=guild.name,
+            member_count=guild.member_count,
+            owner_id=guild.owner_id,
+            owner_mention=f"<@{guild.owner_id}>" if guild.owner_id else None,
+            current_channel=_channel_info(message.channel),
+            channels=matches,
         ),
     )
 
@@ -1524,7 +2425,13 @@ async def send_discord_web_image(
 
 
 async def send_discord_anime_photo(
-    ctx: RunContext[DiscordContextDeps], keyword: str = ""
+    ctx: RunContext[DiscordContextDeps],
+    keyword: str = "",
+    target_channel_id: int | None = None,
+    target_user_ids: list[int] | None = None,
+    caption: str | None = None,
+    allow_everyone: bool = False,
+    count: int = 1,
 ) -> DiscordAnimePhotoResult:
     """Get and send an anime/Pixiv image to the current Discord chat.
 
@@ -1536,8 +2443,55 @@ async def send_discord_anime_photo(
 
     Args:
         keyword: Optional keyword to search for specific anime/Pixiv images.
+        target_channel_id: Optional target channel ID for immediate cross-channel sends.
+            Bot-admin-only when different from the current channel.
+        target_user_ids: Discord user IDs to mention in the sent image message.
+            Use when the user asks to gift/call/tag someone for the image.
+        caption: Optional agent-written text to include with the image. For gift
+            requests, write a direct sentence addressed to the recipient.
+        allow_everyone: Bot-admin-only permission to allow @everyone/@here mentions.
+        count: Number of images requested for this turn. The backend caps this to
+            a safe batch size and spaces each send to avoid Discord limits.
     """
     message = ctx.deps.message
+    target_channel = await _resolve_discord_channel(message, target_channel_id)
+    if target_channel is None or not isinstance(target_channel, discord.abc.Messageable):
+        return DiscordAnimePhotoResult(success=False, message="Target channel is not messageable or was not found.")
+    target_channel_actual_id = getattr(target_channel, "id", message.channel.id)
+    is_admin = _is_discord_bot_admin(message)
+    if target_channel_actual_id != message.channel.id and not is_admin:
+        return DiscordAnimePhotoResult(success=False, message="Only bot admins can send images in another channel.")
+    if allow_everyone and not is_admin:
+        return DiscordAnimePhotoResult(success=False, message="Only bot admins can send @everyone/@here mentions.")
+
+    caption_text = (caption or "").strip()
+    if ("@everyone" in caption_text or "@here" in caption_text) and not is_admin:
+        return DiscordAnimePhotoResult(success=False, message="Only bot admins can send @everyone/@here mentions.")
+    target_ids = list(target_user_ids or [])
+    bot_user_id = _discord_client.user.id if _discord_client and _discord_client.user else None
+    if caption_text:
+        target_ids.extend(int(user_id) for user_id in re.findall(r"<@!?(\d+)>", caption_text))
+    if not target_ids:
+        target_ids = [
+            user.id
+            for user in message.mentions
+            if not user.bot and user.id != bot_user_id
+        ]
+    target_ids = [user_id for user_id in dict.fromkeys(target_ids) if user_id != bot_user_id]
+    mentions = [f"<@{user_id}>" for user_id in target_ids if user_id > 0]
+    caption_has_mention = any(mention in caption_text for mention in mentions)
+    message_content = None
+    embed_caption = caption_text
+    has_everyone_mention = "@everyone" in caption_text or "@here" in caption_text
+    if mentions and caption_text:
+        message_content = caption_text if caption_has_mention else f"{' '.join(mentions)} {caption_text}"
+        embed_caption = ""
+    elif has_everyone_mention and caption_text:
+        message_content = caption_text
+        embed_caption = ""
+    elif mentions:
+        message_content = " ".join(mentions)
+
     r18_mode = await _discord_r18_mode(message.guild)
     if r18_mode == 0 and _contains_r18_keyword(keyword):
         return DiscordAnimePhotoResult(
@@ -1550,50 +2504,121 @@ async def send_discord_anime_photo(
             message="ManyACG is not configured, so Discord cannot send anime photos.",
         )
 
-    ratekey = f"discord_anime_photo_rate_limit:{message.channel.id}:{message.author.id}"
-    current_count = await common.memttlcache.get(ratekey, 0)
-    if current_count > 3:
-        return DiscordAnimePhotoResult(
-            success=False,
-            message="You are sending image requests too frequently. Please try again later.",
+    requested_count = max(1, int(count or 1))
+    capped_count = min(requested_count, _DISCORD_IMAGE_BATCH_MAX)
+    if requested_count > _DISCORD_IMAGE_BATCH_MAX:
+        logger.info(
+            "discord_image_batch_capped "
+            f"user={message.author.id} channel={target_channel_actual_id} "
+            f"requested={requested_count} capped={capped_count}"
         )
-    await common.memttlcache.set(ratekey, current_count + 1, ttl=10)
 
+    image_lock = _discord_image_lock()
+    if image_lock.locked():
+        logger.info(
+            "discord_image_queue_busy "
+            f"user={message.author.id} channel={target_channel_actual_id} wait={_DISCORD_IMAGE_BUSY_WAIT_SECONDS}"
+        )
+        return DiscordAnimePhotoResult(
+            success=False,
+            message="Discord image sender is busy. Ask the user to wait a few seconds; the image will be available soon.",
+            requested_count=requested_count,
+            capped_count=capped_count,
+            wait_seconds=_DISCORD_IMAGE_BUSY_WAIT_SECONDS,
+        )
+
+    sent_count = 0
+    last_info: DiscordAnimePhotoInfo | None = None
+    async with image_lock:
+        for index in range(capped_count):
+            logger.info(
+                "discord_image_request_start "
+                f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                f"target_channel={target_channel_actual_id} user={message.author.id} "
+                f"keyword={keyword!r} index={index + 1}/{capped_count}"
+            )
+            fetched = await _fetch_discord_anime_artwork(keyword.strip(), r18_mode=r18_mode)
+            if fetched is None:
+                logger.warning(
+                    "discord_image_fetch_failed "
+                    f"user={message.author.id} channel={target_channel_actual_id} keyword={keyword!r} "
+                    f"index={index + 1}/{capped_count}"
+                )
+                if sent_count == 0:
+                    return DiscordAnimePhotoResult(
+                        success=False,
+                        message="Failed to fetch anime artwork from ManyACG.",
+                        sent_count=sent_count,
+                        requested_count=requested_count,
+                        capped_count=capped_count,
+                    )
+                break
+            artwork, picture = fetched
+            logger.info(
+                "discord_image_fetch_success "
+                f"user={message.author.id} channel={target_channel_actual_id} "
+                f"title={artwork.title!r} index={index + 1}/{capped_count}"
+            )
+            if not await _send_discord_anime_photo_card(
+                message,
+                artwork,
+                picture,
+                channel=target_channel,
+                content=message_content,
+                caption=embed_caption,
+                allowed_mentions=_discord_allowed_mentions(allow_everyone),
+                reference=message if target_channel_actual_id == message.channel.id and index == 0 else None,
+            ):
+                logger.warning(
+                    "discord_image_send_failed "
+                    f"user={message.author.id} channel={target_channel_actual_id} "
+                    f"title={artwork.title!r} index={index + 1}/{capped_count}"
+                )
+                if sent_count == 0:
+                    return DiscordAnimePhotoResult(
+                        success=False,
+                        message="Failed to upload the anime artwork to Discord.",
+                        sent_count=sent_count,
+                        requested_count=requested_count,
+                        capped_count=capped_count,
+                    )
+                break
+            sent_count += 1
+            artist = None
+            if artwork.artist is not None:
+                artist = DiscordArtistInfo(
+                    name=artwork.artist.name,
+                    type=artwork.artist.type,
+                    username=artwork.artist.username,
+                    uid=artwork.artist.uid,
+                )
+            last_info = DiscordAnimePhotoInfo(
+                title=artwork.title,
+                source_url=artwork.source_url,
+                r18=artwork.r18,
+                description=artwork.description[:512],
+                artist=artist,
+                tags=artwork.tags[:10],
+            )
+            if index < capped_count - 1:
+                await asyncio.sleep(_DISCORD_IMAGE_SEND_DELAY_SECONDS)
     logger.info(
-        "Discord tool call: send_discord_anime_photo "
-        f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
-        f"user={message.author.id} keyword={keyword!r}"
+        "discord_image_batch_done "
+        f"user={message.author.id} channel={target_channel_actual_id} "
+        f"sent={sent_count} requested={requested_count} capped={capped_count}"
     )
-    fetched = await _fetch_discord_anime_artwork(keyword.strip(), r18_mode=r18_mode)
-    if fetched is None:
-        return DiscordAnimePhotoResult(
-            success=False,
-            message="Failed to fetch anime artwork from ManyACG.",
-        )
-    artwork, picture = fetched
-    if not await _send_discord_anime_photo_card(message, artwork, picture):
-        return DiscordAnimePhotoResult(
-            success=False,
-            message="Failed to upload the anime artwork to Discord.",
-        )
-    artist = None
-    if artwork.artist is not None:
-        artist = DiscordArtistInfo(
-            name=artwork.artist.name,
-            type=artwork.artist.type,
-            username=artwork.artist.username,
-            uid=artwork.artist.uid,
-        )
+    result_message = None
+    if requested_count > capped_count:
+        result_message = f"Sent {sent_count}/{requested_count} requested images. For Discord safety, Waku can only send up to {capped_count} images per batch; ask again if you want more."
+    elif sent_count > 1:
+        result_message = f"Sent {sent_count} images safely with a short delay between each one."
     return DiscordAnimePhotoResult(
-        success=True,
-        data=DiscordAnimePhotoInfo(
-            title=artwork.title,
-            source_url=artwork.source_url,
-            r18=artwork.r18,
-            description=artwork.description[:512],
-            artist=artist,
-            tags=artwork.tags[:10],
-        ),
+        success=sent_count > 0,
+        message=result_message,
+        data=last_info,
+        sent_count=sent_count,
+        requested_count=requested_count,
+        capped_count=capped_count,
     )
 
 
@@ -1608,16 +2633,23 @@ async def _send_discord_setu(message: discord.Message) -> bool:
         return True
     await common.memttlcache.set(ratekey, True, ttl=app_config.manyacg_setu_cd)
 
+    image_lock = _discord_image_lock()
+    if image_lock.locked():
+        logger.info(f"discord_image_queue_busy setu user={message.author.id} channel={message.channel.id}")
+        await message.channel.send("Waku đang xử lý ảnh khác, đợi vài giây rồi gọi lại nha.", reference=message)
+        return True
+
     try:
         r18_mode = await _discord_r18_mode(message.guild)
         async with message.channel.typing():
-            fetched = await _fetch_discord_anime_artwork(r18_mode=r18_mode)
-        if fetched is None:
-            await message.channel.send("Could not fetch an image from ManyACG.", reference=message)
+            async with image_lock:
+                fetched = await _fetch_discord_anime_artwork(r18_mode=r18_mode)
+                if fetched is None:
+                    await message.channel.send("Could not fetch an image from ManyACG.", reference=message)
+                    return True
+                artwork, picture = fetched
+                await _send_discord_anime_photo_card(message, artwork, picture)
             return True
-        artwork, picture = fetched
-        await _send_discord_anime_photo_card(message, artwork, picture)
-        return True
     except Exception as e:
         logger.error(f"Discord setu error: {e.__class__.__name__}: {e}")
         await message.channel.send("Image sending failed. Please try again later.", reference=message)
@@ -1728,8 +2760,9 @@ class DiscordConfigView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         self.pending_settings.r18_mode = (self.pending_settings.r18_mode + 1) % 3
+        await interaction.response.defer()
         await self._sync_buttons()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=_discord_config_text(self.pending_settings),
             view=self,
         )
@@ -1739,8 +2772,9 @@ class DiscordConfigView(discord.ui.View):
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
         self.pending_settings.ai_reply = not self.pending_settings.ai_reply
+        await interaction.response.defer()
         await self._sync_buttons()
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=_discord_config_text(self.pending_settings),
             view=self,
         )
@@ -1749,6 +2783,7 @@ class DiscordConfigView(discord.ui.View):
     async def save_config(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
+        await interaction.response.defer()
         await _set_discord_guild_settings(self.guild, self.pending_settings)
         await _rotate_discord_history_epoch(self.guild)
         logger.info(
@@ -1758,9 +2793,68 @@ class DiscordConfigView(discord.ui.View):
             f"({_r18_mode_label(self.pending_settings.r18_mode)}) "
             f"ai_reply={self.pending_settings.ai_reply}"
         )
-        await interaction.response.defer()
         try:
-            await interaction.message.delete()
+            if interaction.message is not None:
+                await interaction.message.delete()
+        except Exception:
+            pass
+        self.stop()
+
+
+class DiscordDMConfigView(discord.ui.View):
+    def __init__(self, user: discord.abc.User, settings: DiscordGuildSettings):
+        super().__init__(timeout=300)
+        self.user = user
+        self.message: discord.Message | None = None
+        self.pending_settings = DiscordGuildSettings(
+            enabled=True,
+            r18_mode=0,
+            ai_reply=settings.ai_reply,
+        )
+
+    async def on_timeout(self) -> None:
+        if self.message is None:
+            return
+        try:
+            await self.message.delete()
+        except Exception:
+            pass
+
+    async def _sync_buttons(self) -> None:
+        ai_button = self.children[0]
+        if isinstance(ai_button, discord.ui.Button):
+            ai_button.label = f"AI Reply: {'ON' if self.pending_settings.ai_reply else 'OFF'}"
+            ai_button.style = (
+                discord.ButtonStyle.success
+                if self.pending_settings.ai_reply
+                else discord.ButtonStyle.secondary
+            )
+
+    @discord.ui.button(label="AI Reply", style=discord.ButtonStyle.success)
+    async def toggle_ai_reply(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        self.pending_settings.ai_reply = not self.pending_settings.ai_reply
+        await interaction.response.defer()
+        await self._sync_buttons()
+        await interaction.edit_original_response(
+            content=_discord_dm_config_text(self.pending_settings),
+            view=self,
+        )
+
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.success)
+    async def save_config(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        await interaction.response.defer()
+        await _set_discord_dm_settings(self.user, self.pending_settings)
+        logger.info(
+            "Discord DM config saved: "
+            f"user={self.user.id} ai_reply={self.pending_settings.ai_reply}"
+        )
+        try:
+            if interaction.message is not None:
+                await interaction.message.delete()
         except Exception:
             pass
         self.stop()
@@ -1771,6 +2865,23 @@ async def _new_discord_config_view(guild: discord.Guild) -> DiscordConfigView:
     view = DiscordConfigView(guild, settings)
     await view._sync_buttons()
     return view
+
+
+async def _new_discord_dm_config_view(user: discord.abc.User) -> DiscordDMConfigView:
+    settings = await _discord_dm_settings(user)
+    view = DiscordDMConfigView(user, settings)
+    await view._sync_buttons()
+    return view
+
+
+def _discord_dm_config_text(settings: DiscordGuildSettings) -> str:
+    return (
+        "**Waku DM config:**\n"
+        f"AI Reply: `{'ON' if settings.ai_reply else 'OFF'}`\n"
+        "\nWhen AI Reply is `OFF`, Waku will ignore normal DM chat messages. "
+        "Commands like `!config` still work.\n"
+        "\nPress `Save` to apply changes."
+    )
 
 
 def _discord_config_text(settings: DiscordGuildSettings) -> str:
@@ -1917,7 +3028,14 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
         return False
 
     if message.guild is None:
-        if command == "server" and _is_discord_bot_admin(message):
+        if command == "config":
+            view = await _new_discord_dm_config_view(message.author)
+            config_message = await message.channel.send(
+                _discord_dm_config_text(view.pending_settings),
+                view=view,
+            )
+            view.message = config_message
+        elif command == "server" and _is_discord_bot_admin(message):
             await _send_discord_server_list(message)
         elif command in {"waku", "unwaku"} and _is_discord_bot_admin(message):
             if not args or not args.isdigit():
@@ -1965,6 +3083,7 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
                 _discord_config_text(view.pending_settings),
                 view=view,
                 reference=message,
+                mention_author=False,
             )
             view.message = config_message
             try:
@@ -2009,15 +3128,36 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
     history_key = await _history_key(message)
     history: list[ModelMessage] = await common.memttlcache.get(history_key, [])
     history = _sanitize_discord_history(history)
-    prompt = await _build_prompt(message, user_prompt)
+    periodic_reaction_nudge = ""
+    if app_config.agent_periodic_reaction_interval > 0:
+        reaction_ctr: int = await common.memstore.get(_reaction_counter_key(message), 0)
+        await common.memstore.set(_reaction_counter_key(message), reaction_ctr + 1)
+        if reaction_ctr > 0 and reaction_ctr % app_config.agent_periodic_reaction_interval == 0:
+            periodic_reaction_nudge = (
+                "\n\nDiscord reaction nudge: if appropriate, call send_discord_reaction "
+                "exactly once this turn with an emoji that matches the user's message."
+            )
+
+    prompt, needs_multimodal = await _build_prompt(message, user_prompt + periodic_reaction_nudge)
+    model_override = (
+        provider.make_chat_model(app_config.agent_model_multimodal)
+        if needs_multimodal and app_config.agent_model_multimodal
+        else None
+    )
+    model_history = (
+        history
+        if model_override is not None
+        else _strip_multimodal_history_for_text_model(history)
+    )
 
     await common.memstore.set(waiting_key, True)
     try:
         async with message.channel.typing():
             result = await _discord_agent.run(
                 user_prompt=prompt,
-                message_history=history[-app_config.discord_message_history_limit :],
+                message_history=model_history[-app_config.discord_message_history_limit :],
                 deps=DiscordContextDeps(message=message),
+                model=model_override,
             )
         await common.memttlcache.set(
             history_key,
@@ -2063,6 +3203,7 @@ def _create_client() -> discord.Client:
         if await _handle_discord_admin_command(message):
             return
         await _remember_discord_emojis(message)
+        await _remember_discord_reaction_style(message)
         should_wake, prompt = await _should_wake(message, bot_user)
         if not should_wake:
             return
@@ -2102,34 +3243,82 @@ async def start_discord_bot() -> None:
             "Use natural emojis/emoticons in most casual replies, usually 1-3, "
             "but do not spam them or add them to serious/admin/error messages. "
             "Discord image behavior: when the user asks Waku to send/show/give "
-            "an anime/Pixiv image, photo, picture, setu, ảnh, or hình, call "
-            "send_discord_anime_photo exactly once before final text unless you "
-            "are intentionally refusing. Pass a concise keyword when the user "
-            "names a character or topic. For general internet/web image "
-            "requests, use send_discord_web_image with a concise search query. "
-            "If an image tool returns success=False, explain that failure and "
-            "do not claim an image was sent. Do not mention tool internals to "
-            "the user. "
+            "a new anime/Pixiv image, photo, picture, setu, ảnh, or hình, call "
+            "send_discord_anime_photo at most once before final text unless you "
+            "are intentionally refusing. For a normal image request use count=1. "
+            "If the user asks for many images, never request more than count=3; "
+            "the backend will space them safely. Do not call image-sending tools "
+            "repeatedly in one turn. Do not call image-sending tools when the "
+            "user is asking you to inspect, describe, identify, analyze, or answer "
+            "about an attached/replied image; answer from the provided media instead. "
+            "Pass a concise keyword when the user names a character or topic. If the "
+            "user asks to send/gift an image now, including to another channel, use "
+            "send_discord_anime_photo with target_channel_id/target_user_ids/caption/count; "
+            "if the user asks to tag @everyone/@here, include @everyone/@here in "
+            "caption and set allow_everyone=True. Do not create a schedule unless "
+            "the user asks for a future time, delay, or repetition. For general "
+            "internet/web image requests, use send_discord_web_image with a "
+            "concise search query. "
+            "If an image tool returns success=False with wait_seconds or a busy "
+            "message, tell the user to wait a few seconds and do not claim an image "
+            "was sent. If it returns a capped result, clearly tell the user that "
+            "Waku could only send up to 3 images in one batch for Discord safety, "
+            "and they can ask for more later. If any image tool "
+            "returns success=False, explain that failure and do not claim an image "
+            "was sent. Do not mention tool internals to the user. "
             "Discord reminder behavior: when the user asks Waku to remind, "
             "schedule, or send a text later, use schedule_discord_message. "
-            "If the time is missing or ambiguous, ask a short follow-up. Use "
+            "If the request names/mentions another Discord user, set "
+            "target_user_ids to that user's ID so only that user is tagged at "
+            "reminder time; do not always tag the requester. If no target user "
+            "is named, remind the requester. Bot-admin-only advanced scheduling: "
+            "for repeating reminders set repeat_every_seconds and repeat_until; "
+            "for scheduled/repeating image sends use schedule_discord_image_action; "
+            "if the image should be sent to/call/tag/gift/tặng a mentioned or named "
+            "user, always set target_user_ids so that user is mentioned in the image "
+            "message. Also write the gift/greeting text yourself in caption; the "
+            "caption must directly address that recipient and include their <@user_id> "
+            "mention inside the sentence, not as a detached tag. If the user did not "
+            "specify wording, invent a short cute Waku-style gift line for that user. "
+            "when the user says send an image/photo/ảnh without clearly saying "
+            "web/internet search, keep image_kind='anime' to use the default image "
+            "API; only use image_kind='web' when they explicitly ask for web images. "
+            "for another channel first resolve it with find_discord_channel and pass "
+            "target_channel_id. If the current user replies to another message, treat "
+            "that referenced message as source text/instructions to follow, not as the "
+            "person to tag or credit unless explicitly requested. Bot admins may ask "
+            "to see every existing schedule; then call list_discord_scheduled_messages "
+            "with include_all=True. For repeating/cross-channel/@everyone scheduling, "
+            "first and let the backend permission check decide; do not pre-refuse "
+            "before calling the tool. If the tool returns an admin-only/permission "
+            "failure, then explain that limitation briefly. When scheduling/tagging "
+            "someone in another channel, never reveal who created/requested the job "
+            "unless the user explicitly asks. If a channel/user match is ambiguous, "
+            "ask a short confirmation. If the time is missing or ambiguous, ask a "
+            "short follow-up. Use "
             "list_discord_scheduled_messages and cancel_discord_scheduled_message "
-            "for listing/cancelling reminders. "
-            "Discord context tools: when useful, Waku may inspect the current "
-            "server/channel, resolve Discord users, mention users with returned "
-            "<@user_id> mention strings, and search recent readable channel "
+            "for listing/cancelling reminders, including recurring image jobs. "
             "messages. Only search chat when the user asks or it clearly helps. "
+            "Discord reaction behavior: Waku may call send_discord_reaction "
+            "when a lightweight reaction fits better than a text reply, or as a "
+            "small addition to a short reply. Prefer learned emojis from Discord "
+            "reaction style context, but default to common Unicode reactions like "
+            "👍 ❤️ 😂 😭 🔥 🎉 👏 👀 🤔 🥰 😮 🙏. Do not overuse reactions. "
+            "If send_discord_reaction fails, do not claim a reaction was added. "
             "If a Discord permission is missing, explain that briefly."
         ),
         output_type=str,
         tools=[
             Tool(get_discord_server_info, sequential=True),
+            Tool(find_discord_channel, sequential=True),
             Tool(find_discord_user, sequential=True),
             Tool(mention_discord_user, sequential=True),
             Tool(search_discord_messages, sequential=True),
+            Tool(send_discord_reaction, sequential=True),
             Tool(send_discord_web_image, sequential=True),
             Tool(send_discord_anime_photo, sequential=True),
             Tool(schedule_discord_message, sequential=True),
+            Tool(schedule_discord_image_action, sequential=True),
             Tool(list_discord_scheduled_messages, sequential=True),
             Tool(cancel_discord_scheduled_message, sequential=True),
         ],
