@@ -132,7 +132,7 @@ async def prepare_periodic_sticker(
                 f"stored={sticker_count}/{MIN_STICKER_COUNT}"
             )
             return None
-        logger.info(
+        logger.debug(
             f"send_sticker available: chat_id={ctx.deps.chat_id} stored={sticker_count}"
         )
     except Exception as e:

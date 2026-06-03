@@ -1,3 +1,4 @@
+import asyncio
 import random
 import re
 from datetime import UTC, datetime, timedelta
@@ -100,6 +101,7 @@ async def _is_protected_bot_admin_or_owner(user_id: int, chat_id: int) -> bool:
 _SELF_MODERATION_ACTIONS = {"ban", "kick", "mute"}
 _SELF_MANAGEMENT_ACTIONS = _SELF_MODERATION_ACTIONS | {"set tag", "clear tag"}
 _MAX_MEMBER_TAG_LENGTH = 16
+_GAY_MODE_JOBS: dict[int, asyncio.Task] = {}
 _SELF_TARGET_ALIASES = {
     "self",
     "me",
@@ -722,6 +724,9 @@ async def _gay_mode_targets(ctx: RunContext[datatype.ContextDeps]):
     skipped = 0
     me = await ctx.deps.client.get_me()
     for assoc, user in rows:
+        if user.id <= 0 or not user.is_real_user:
+            skipped += 1
+            continue
         if user.id == me.id or user.is_bot:
             skipped += 1
             continue
@@ -743,49 +748,114 @@ async def preview_gay_mode(ctx: RunContext[datatype.ContextDeps]) -> str:
     )
 
 
+def _has_running_gay_mode_job(chat_id: int) -> bool:
+    task = _GAY_MODE_JOBS.get(chat_id)
+    return bool(task is not None and not task.done())
+
+
+async def _send_gay_mode_result(client, chat_id: int, text: str) -> None:
+    try:
+        await client.send_message(chat_id=chat_id, text=text)
+    except Exception as e:
+        logger.warning(
+            f"Failed to send gay mode backend result to chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+
+
+async def _run_activate_gay_mode_job(
+    client,
+    chat_id: int,
+    targets: list[tuple[UserChatAssociation, UserData]],
+    skipped: int,
+    total: int,
+) -> None:
+    ok = 0
+    for assoc, user in targets:
+        tag = f"gay {random.randint(0, 100)}%"
+        try:
+            await client.set_chat_member_tag(chat_id, user.id, tag=tag)
+            await database.mark_gay_mode_tag(chat_id, user.id, assoc.member_tag)
+            ok += 1
+        except Exception as e:
+            logger.warning(f"Gay mode stopped while setting tag for {user.id}: {e}")
+            await _send_gay_mode_result(
+                client,
+                chat_id,
+                "Gaymode đã dừng do lỗi. "
+                f"Đã kích hoạt trên {ok} người, bỏ qua {skipped} người. "
+                f"Lỗi tại {user.full_name} ({user.id}): {e.__class__.__name__}.",
+            )
+            return
+    await _send_gay_mode_result(
+        client,
+        chat_id,
+        f"Gaymode đã được kích hoạt trên {ok} người, bỏ qua {skipped} người.",
+    )
+    logger.info(f"Gay mode activation completed in chat {chat_id}: ok={ok}, skipped={skipped}, total={total}")
+
+
+async def _run_deactivate_gay_mode_job(
+    client,
+    chat_id: int,
+    rows: list[tuple[UserChatAssociation, UserData]],
+) -> None:
+    ok = 0
+    for assoc, user in rows:
+        try:
+            await client.set_chat_member_tag(chat_id, user.id, tag=assoc.gay_mode_previous_tag)
+            await database.clear_gay_mode_state(chat_id, user.id, assoc.gay_mode_previous_tag)
+            ok += 1
+        except Exception as e:
+            logger.warning(f"Gay mode restore stopped for {user.id}: {e}")
+            await _send_gay_mode_result(
+                client,
+                chat_id,
+                "Hủy gaymode đã dừng do lỗi. "
+                f"Đã khôi phục {ok} người. "
+                f"Lỗi tại {user.full_name} ({user.id}): {e.__class__.__name__}.",
+            )
+            return
+    await _send_gay_mode_result(
+        client,
+        chat_id,
+        f"Đã hủy gaymode và khôi phục {ok} người.",
+    )
+    logger.info(f"Gay mode restore completed in chat {chat_id}: restored={ok}")
+
+
 async def activate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
-    """Apply gay mode by setting targetable member tags to random 'gay N%'. Requires explicit confirmation."""
+    """Start a backend job to apply gay mode. Requires explicit confirmation."""
     if refusal := await _ensure_true_bot_admin_access(ctx, "activate gay mode"):
         return refusal
     if not confirm:
         return await preview_gay_mode(ctx)
+    chat_id = ctx.deps.chat_id
+    if _has_running_gay_mode_job(chat_id):
+        return "Gay mode backend is already running for this group. Wait for the final result."
     targets, skipped, total = await _gay_mode_targets(ctx)
-    ok = 0
-    failed = 0
-    for assoc, user in targets:
-        tag = f"gay {random.randint(0, 100)}%"
-        try:
-            await ctx.deps.client.set_chat_member_tag(ctx.deps.chat_id, user.id, tag=tag)
-            await database.mark_gay_mode_tag(ctx.deps.chat_id, user.id, assoc.member_tag)
-            ok += 1
-        except RPCError as e:
-            failed += 1
-            logger.warning(f"Failed to set gay mode tag for {user.id}: {e}")
-    return f"Gay mode activated: affected={ok}, failed={failed}, ignored={skipped}."
+    task = asyncio.create_task(
+        _run_activate_gay_mode_job(ctx.deps.client, chat_id, targets, skipped, total)
+    )
+    _GAY_MODE_JOBS[chat_id] = task
+    task.add_done_callback(lambda _: _GAY_MODE_JOBS.pop(chat_id, None))
+    return "Gay mode backend started. I will send the final result when it finishes."
 
 
 async def deactivate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
-    """Restore member tags changed by gay mode. Requires explicit confirmation."""
+    """Start a backend job to restore member tags changed by gay mode."""
     if refusal := await _ensure_true_bot_admin_access(ctx, "deactivate gay mode"):
         return refusal
-    rows = await database.get_gay_mode_applied_members(ctx.deps.chat_id)
+    chat_id = ctx.deps.chat_id
+    rows = await database.get_gay_mode_applied_members(chat_id)
     if not confirm:
-        return f"Gay mode restore preview: {len(rows)} members will be restored/cleared. Ask for confirmation first."
-    ok = 0
-    failed = 0
-    for assoc, user in rows:
-        try:
-            await ctx.deps.client.set_chat_member_tag(
-                ctx.deps.chat_id, user.id, tag=assoc.gay_mode_previous_tag
-            )
-            await database.clear_gay_mode_state(
-                ctx.deps.chat_id, user.id, assoc.gay_mode_previous_tag
-            )
-            ok += 1
-        except RPCError as e:
-            failed += 1
-            logger.warning(f"Failed to restore gay mode tag for {user.id}: {e}")
-    return f"Gay mode disabled: restored={ok}, failed={failed}."
+        return f"Gay mode restore check: affected={len(rows)}. Ask for confirmation first."
+    if _has_running_gay_mode_job(chat_id):
+        return "Gay mode backend is already running for this group. Wait for the final result."
+    task = asyncio.create_task(_run_deactivate_gay_mode_job(ctx.deps.client, chat_id, rows))
+    _GAY_MODE_JOBS[chat_id] = task
+    task.add_done_callback(lambda _: _GAY_MODE_JOBS.pop(chat_id, None))
+    return "Gay mode restore backend started. I will send the final result when it finishes."
 
 
 async def is_user_blocked(user_id: int) -> bool:

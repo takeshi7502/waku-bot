@@ -20,7 +20,19 @@ bot:
     sync_members_cd: Đừng dùng lệnh này quá thường xuyên! Vui lòng thử lại sau.
     sync_members_done: Đồng bộ xong! Đã quét {scanned} thành viên, cập nhật {updated}, dọn {count} thành viên cũ.
     sync_members_start: Đang đồng bộ danh sách thành viên...
+    sync_members_progress: |
+      Đang đồng bộ thành viên...
+      [{bar}] {scanned}/{total}
+      Đã cập nhật: {updated}
+    sync_members_progress_unknown_total: |
+      Đang đồng bộ thành viên...
+      Đã quét: {scanned}
+      Đã cập nhật: {updated}
     sync_members_error: Thất bại rồi, hãy thử cấp quyền quản trị viên cho bot rồi thử lại.
+    sync_members_error_progress: |
+      Đồng bộ đã dừng do lỗi {error}.
+      Đã quét: {scanned}
+      Đã cập nhật: {updated}
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}

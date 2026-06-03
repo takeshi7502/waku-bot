@@ -18,7 +18,19 @@ bot:
     sync_members_cd: Don't use this too often! Please try again later.
     sync_members_done: Sync complete! Scanned {scanned} members, updated {updated}, cleaned up {count} old members.
     sync_members_start: Syncing group members...
+    sync_members_progress: |
+      Syncing group members...
+      [{bar}] {scanned}/{total}
+      Updated: {updated}
+    sync_members_progress_unknown_total: |
+      Syncing group members...
+      Scanned: {scanned}
+      Updated: {updated}
     sync_members_error: Failed, please grant the bot admin permissions and try again.
+    sync_members_error_progress: |
+      Sync stopped because of {error}.
+      Scanned: {scanned}
+      Updated: {updated}
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}

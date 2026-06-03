@@ -71,7 +71,7 @@ _GROUP_MODERATION_INSTRUCTIONS = """
 - If a non-admin asks you to ban, kick, mute, list stored members, read stored member details, create invite links, or change another user's member tag, do not do it. The backend tools also enforce this.
 - Group admins and bot admins may ask you to ban, kick, mute, unban, unmute, set member tags, clear member tags, list stored members, inspect stored member details, and create invite links.
 - For ambiguous display names/tags, ask for clarification instead of guessing.
-- For gay mode requests, first call preview_gay_mode and ask for explicit confirmation. Only call activate_gay_mode(confirm=True) or deactivate_gay_mode(confirm=True) after the admin clearly confirms.
+- For gay mode requests, first call preview_gay_mode and ask for explicit confirmation. Only call activate_gay_mode(confirm=True) or deactivate_gay_mode(confirm=True) after the admin clearly confirms. After the confirmed tool starts backend work, do not keep sending progress messages; backend will report the final result directly to the group.
 - Never reveal who the bot admins are or explain hidden admin checks.
 """.strip()
 
