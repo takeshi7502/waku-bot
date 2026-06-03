@@ -1,7 +1,7 @@
+import random
 import re
 from datetime import UTC, datetime, timedelta
 
-import sqlalchemy
 from pydantic_ai import RunContext
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import RPCError
@@ -10,7 +10,6 @@ from pyrogram.types import ChatPermissions
 from waku import common, database
 from waku.affection import get_affection_rank
 from waku.config import app_config
-from waku.database.db import AsyncSessionFactory
 from waku.database.models import UserChatAssociation, UserData
 from waku.logger import logger
 
@@ -59,6 +58,21 @@ async def _can_request_moderation_action(
         logger.warning(
             f"Failed to verify moderation requester {user_id} "
             f"in chat {chat_id}: {e.__class__.__name__}: {e}"
+        )
+        return False
+
+
+async def _can_request_true_bot_admin_action(ctx: RunContext[datatype.ContextDeps]) -> bool:
+    """Only owners and global bot admins, not promoted per-group bot admins."""
+    try:
+        if ctx.deps.user_id in app_config.owners:
+            return True
+        db_user = await database.get_user_by_id(ctx.deps.user_id)
+        return bool(db_user is not None and db_user.is_bot_global_admin)
+    except Exception as e:
+        logger.warning(
+            f"Failed to verify true bot admin requester {ctx.deps.user_id}: "
+            f"{e.__class__.__name__}: {e}"
         )
         return False
 
@@ -172,55 +186,17 @@ _TG_USER_ID_RE = re.compile(r"tg://user\?id=(-?\d+)")
 
 
 async def _resolve_user_by_name_in_chat(chat_id: int, target: str) -> tuple[int | None, str | None]:
-    """Resolve a group member by username/full name only when the match is safe."""
-    normalized = target.strip().lower().lstrip("@")
-    if not normalized:
-        return None, None
-
-    async with AsyncSessionFactory() as session:
-        stmt = (
-            sqlalchemy.select(UserData)
-            .join(
-                UserChatAssociation,
-                (UserChatAssociation.user_id == UserData.id)
-                & (UserChatAssociation.chat_id == chat_id),
-            )
-            .where(sqlalchemy.not_(UserData.is_bot))
+    """Resolve a group member by username/full name/member tag only when safe."""
+    result = await database.resolve_member_by_name(chat_id, target)
+    if result.user_id is not None:
+        return result.user_id, None
+    if result.reason == "ambiguous":
+        preview = "; ".join(
+            f"{name} (@{username}) id={user_id} tag={tag or '-'}"
+            for user_id, name, username, tag in result.matches[:8]
         )
-        result = await session.execute(stmt)
-        users = list(result.scalars().all())
-
-    exact_username = [
-        user
-        for user in users
-        if user.username and user.username.lower() == normalized
-    ]
-    if len(exact_username) == 1:
-        return exact_username[0].id, None
-    if len(exact_username) > 1:
-        return None, "Multiple users match that username. Provide a user ID or reply to the target message."
-
-    exact_name = [
-        user
-        for user in users
-        if user.full_name and user.full_name.lower() == normalized
-    ]
-    if len(exact_name) == 1:
-        return exact_name[0].id, None
-    if len(exact_name) > 1:
-        return None, "Multiple users match that name. Reply to the target message, mention @username, or provide user ID."
-
-    partial_name = [
-        user
-        for user in users
-        if user.full_name and normalized in user.full_name.lower()
-    ]
-    if len(partial_name) == 1:
-        return partial_name[0].id, None
-    if len(partial_name) > 1:
-        return None, "Multiple users match that name. Reply to the target message, mention @username, or provide user ID."
-
-    return None, "Cannot resolve target user. Reply to their message, mention @username, or provide user ID."
+        return None, f"Multiple users match that name/tag. Ask the user to clarify: {preview}"
+    return None, "Cannot resolve target user from stored data. Ask them to reply, mention @username, provide user ID, or run /syncmembers first."
 
 
 async def _resolve_moderation_target(
@@ -665,6 +641,151 @@ async def clear_member_tag(
         f"requested by {ctx.deps.user_id}"
     )
     return f"Member tag for user {user_id} has been cleared."
+
+
+async def _ensure_admin_database_access(ctx: RunContext[datatype.ContextDeps], action: str) -> str | None:
+    if ctx.deps.chat_id >= 0:
+        return f"Cannot {action} outside group chats."
+    if not await _can_request_moderation_action(ctx):
+        return f"Only bot admins or group managers can {action}."
+    return None
+
+
+async def _ensure_true_bot_admin_access(ctx: RunContext[datatype.ContextDeps], action: str) -> str | None:
+    if ctx.deps.chat_id >= 0:
+        return f"Cannot {action} outside group chats."
+    if not await _can_request_true_bot_admin_action(ctx):
+        return f"Only real bot admins can {action}."
+    return None
+
+
+def _format_member_line(assoc: UserChatAssociation, user: UserData) -> str:
+    username = f"@{user.username}" if user.username else "no username"
+    role = assoc.member_status or ("admin" if assoc.member_is_admin else "member")
+    tag = assoc.member_tag or "-"
+    return f"{user.full_name} ({username}) id={user.id} role={role} tag={tag}"
+
+
+async def list_group_members(ctx: RunContext[datatype.ContextDeps], limit: int = 50) -> str:
+    """List stored group members from the bot database. Bot admins only."""
+    if refusal := await _ensure_admin_database_access(ctx, "list stored group members"):
+        return refusal
+    limit = max(1, min(limit, 100))
+    rows = await database.get_chat_member_snapshots(ctx.deps.chat_id)
+    lines = [_format_member_line(assoc, user) for assoc, user in rows[:limit]]
+    more = max(0, len(rows) - len(lines))
+    suffix = f"\n...and {more} more stored members." if more else ""
+    return f"Stored members: {len(rows)}\n" + "\n".join(lines) + suffix
+
+
+async def get_group_member_info(ctx: RunContext[datatype.ContextDeps], target: str) -> str:
+    """Get stored details for one group member by name, username, tag, or ID. Bot admins only."""
+    if refusal := await _ensure_admin_database_access(ctx, "read stored member info"):
+        return refusal
+    user_id, refusal = await _resolve_moderation_target(ctx, None, target)
+    if refusal or user_id is None:
+        return refusal or "Cannot resolve member."
+    rows = await database.get_chat_member_snapshots(ctx.deps.chat_id, include_bots=True)
+    for assoc, user in rows:
+        if user.id == user_id:
+            return _format_member_line(assoc, user)
+    return "Member is not stored for this group. Run /syncmembers first."
+
+
+async def get_or_create_private_invite_link(ctx: RunContext[datatype.ContextDeps]) -> str:
+    """Return the public group link, or create/export an invite link for private groups. Bot admins only."""
+    if refusal := await _ensure_admin_database_access(ctx, "get group invite links"):
+        return refusal
+    try:
+        chat = await ctx.deps.client.get_chat(ctx.deps.chat_id)
+        username = getattr(chat, "username", None)
+        if username:
+            return f"Group link: https://t.me/{username}"
+    except RPCError as e:
+        logger.warning(f"Failed to check public group username before invite link: {e}")
+
+    try:
+        link_obj = await ctx.deps.client.create_chat_invite_link(ctx.deps.chat_id)
+        return f"Invite link: {link_obj.invite_link}"
+    except Exception as first_error:
+        try:
+            link = await ctx.deps.client.export_chat_invite_link(ctx.deps.chat_id)
+            return f"Invite link: {link}"
+        except RPCError as e:
+            logger.warning(f"Failed to create invite link: {first_error}; fallback: {e}")
+            return f"Failed to create invite link: {e.__class__.__name__}. The bot may lack invite permissions."
+
+
+async def _gay_mode_targets(ctx: RunContext[datatype.ContextDeps]):
+    rows = await database.get_chat_member_snapshots(ctx.deps.chat_id)
+    targets = []
+    skipped = 0
+    me = await ctx.deps.client.get_me()
+    for assoc, user in rows:
+        if user.id == me.id or user.is_bot:
+            skipped += 1
+            continue
+        if assoc.member_status in {"owner", "administrator"} or assoc.member_is_admin:
+            skipped += 1
+            continue
+        targets.append((assoc, user))
+    return targets, skipped, len(rows)
+
+
+async def preview_gay_mode(ctx: RunContext[datatype.ContextDeps]) -> str:
+    """Preview gay mode targets. Bot admins only; ask for confirmation before activating."""
+    if refusal := await _ensure_true_bot_admin_access(ctx, "preview gay mode"):
+        return refusal
+    targets, skipped, total = await _gay_mode_targets(ctx)
+    return (
+        f"Gay mode check: total={total}, affected={len(targets)}, ignored={skipped}. "
+        "Ask the admin to confirm before calling activate_gay_mode(confirm=True)."
+    )
+
+
+async def activate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
+    """Apply gay mode by setting targetable member tags to random 'gay N%'. Requires explicit confirmation."""
+    if refusal := await _ensure_true_bot_admin_access(ctx, "activate gay mode"):
+        return refusal
+    if not confirm:
+        return await preview_gay_mode(ctx)
+    targets, skipped, total = await _gay_mode_targets(ctx)
+    ok = 0
+    failed = 0
+    for assoc, user in targets:
+        tag = f"gay {random.randint(0, 100)}%"
+        try:
+            await ctx.deps.client.set_chat_member_tag(ctx.deps.chat_id, user.id, tag=tag)
+            await database.mark_gay_mode_tag(ctx.deps.chat_id, user.id, assoc.member_tag)
+            ok += 1
+        except RPCError as e:
+            failed += 1
+            logger.warning(f"Failed to set gay mode tag for {user.id}: {e}")
+    return f"Gay mode activated: affected={ok}, failed={failed}, ignored={skipped}."
+
+
+async def deactivate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
+    """Restore member tags changed by gay mode. Requires explicit confirmation."""
+    if refusal := await _ensure_true_bot_admin_access(ctx, "deactivate gay mode"):
+        return refusal
+    rows = await database.get_gay_mode_applied_members(ctx.deps.chat_id)
+    if not confirm:
+        return f"Gay mode restore preview: {len(rows)} members will be restored/cleared. Ask for confirmation first."
+    ok = 0
+    failed = 0
+    for assoc, user in rows:
+        try:
+            await ctx.deps.client.set_chat_member_tag(
+                ctx.deps.chat_id, user.id, tag=assoc.gay_mode_previous_tag
+            )
+            await database.clear_gay_mode_state(
+                ctx.deps.chat_id, user.id, assoc.gay_mode_previous_tag
+            )
+            ok += 1
+        except RPCError as e:
+            failed += 1
+            logger.warning(f"Failed to restore gay mode tag for {user.id}: {e}")
+    return f"Gay mode disabled: restored={ok}, failed={failed}."
 
 
 async def is_user_blocked(user_id: int) -> bool:

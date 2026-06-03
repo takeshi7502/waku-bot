@@ -1,6 +1,12 @@
-﻿bot:
+bot:
   msg:
     lang_changed: 언어가 {lang}으로 변경되었어요.
+    private_start: |
+      Nya~
+      /lang 명령으로 봇 언어를 변경할 수 있어요.
+    group_start: |
+      Hi~
+      이 그룹에서는 /lang 명령으로 봇 언어를 변경할 수 있어요.
     no_permission_group: 이 그룹에서 봇을 관리할 권한이 없어요!
     group_config: 버튼을 눌러 그룹 설정을 변경하세요!
     unknown_operation: 알 수 없는 명령어예요. 나쁜 짓은 안돼요~
@@ -11,6 +17,8 @@
     cleanning: waku가 방을 청소하는 중...
     sync_members_cd: 너무 자주 사용하면 안돼요! 잠시 후에 다시 시도해주세요.
     sync_members_done: 동기화 완료! {count}명의 멤버를 정리했어요.
+    sync_members_start: 그룹 멤버를 동기화하는 중...
+    sync_members_error: 실패했어요. 봇에게 관리자 권한을 부여한 뒤 다시 시도해주세요.
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -56,7 +64,7 @@
       /t - 칭호 얻기 | 칭호 선물하기
       /td - 내 칭호 삭제
       /sett - /t 명령어 권한 변경
-      /setu - 숭한 짤 좀... (/ω＼*)
+      /seg - 숭한 짤 좀... (/ω＼*)
       /greet - 그룹 환영 메시지 설정
       /id - 채팅 ID 얻기
       /ip - IP/도메인 정보 조회
@@ -262,7 +270,7 @@
     sett: 칭호 권한 변경
     id: 채팅 ID 얻기
     ip: IP 정보 얻기
-    setu: 숭한 짤
+    seg: 숭한 짤
     config: 그룹 설정 변경
     greet: 환영 메시지 설정
     help: 도움말|더보기
@@ -308,6 +316,7 @@
     title_permissions:
       can_change_info: 정보 변경
       can_delete_messages: 메시지 삭제
+      can_manage_tags: 태그 관리
       can_edit_messages: 메시지 수정
       can_restrict_members: 멤버 차단
       can_invite_users: 유저 초대

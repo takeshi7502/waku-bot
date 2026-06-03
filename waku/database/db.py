@@ -1,4 +1,4 @@
-﻿import inspect
+import inspect
 import pathlib
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -200,10 +200,55 @@ async def manage_quote_text_index() -> None:
                 logger.debug("pg_trgm index already exists for quotes.text")
 
 
+async def _ensure_user_chat_association_columns() -> None:
+    """Add member snapshot columns for existing deployments.
+
+    SQLAlchemy create_all creates missing tables but does not alter existing tables.
+    Keep this intentionally small and idempotent for the columns added by this
+    feature so older databases can start without a manual migration.
+    """
+    columns = {
+        "member_status": sqlalchemy.String(32),
+        "member_tag": sqlalchemy.String(64),
+        "member_is_admin": sqlalchemy.Boolean(),
+        "member_privileges": sqlalchemy.JSON(),
+        "last_member_sync_at": sqlalchemy.DateTime(timezone=True),
+        "gay_mode_previous_tag": sqlalchemy.String(64),
+        "gay_mode_applied": sqlalchemy.Boolean(),
+    }
+    async with engine.begin() as conn:
+        existing = await conn.run_sync(
+            lambda sync_conn: {
+                column["name"]
+                for column in sqlalchemy.inspect(sync_conn).get_columns(
+                    "user_chat_association"
+                )
+            }
+        )
+        dialect = conn.dialect
+        for name, column_type in columns.items():
+            if name in existing:
+                continue
+            column_sql = column_type.compile(dialect=dialect)
+            if name in {"member_is_admin", "gay_mode_applied"}:
+                default_value = "false" if dialect.name == "postgresql" else "0"
+                default_sql = f" DEFAULT {default_value}"
+            else:
+                default_sql = ""
+            logger.info(f"Adding user_chat_association.{name} column")
+            await conn.execute(
+                sqlalchemy.text(
+                    f"ALTER TABLE user_chat_association ADD COLUMN {name} {column_sql}{default_sql}"
+                )
+            )
+
+
 async def init_db() -> None:
     logger.info(i18n.t("log.db_initing", locale=app_config.lang))
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    await _ensure_user_chat_association_columns()
 
     from .affection import init_affection_histogram
 

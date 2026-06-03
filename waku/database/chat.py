@@ -1,4 +1,4 @@
-﻿import sqlalchemy
+import sqlalchemy
 import sqlalchemy.dialects
 import sqlalchemy.dialects.mysql
 import sqlalchemy.dialects.postgresql
@@ -27,6 +27,29 @@ async def count_chats(session: AsyncSession | None = None) -> int:
     stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(ChatData)
     result = await session.execute(stmt)
     return result.scalar() or 0
+
+
+@with_session
+async def list_known_telegram_groups(
+    limit: int = 50, session: AsyncSession | None = None
+) -> list[ChatData]:
+    assert session is not None
+
+    stmt = (
+        sqlalchemy.select(ChatData)
+        .where(ChatData.id < 0)
+        .order_by(ChatData.updated_at.desc(), ChatData.id.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    rows = result.scalars().all()
+    groups: list[ChatData] = []
+    for chat in rows:
+        config = chat.chat_config
+        if config.discord_enabled or chat.title.startswith("Discord DM "):
+            continue
+        groups.append(chat)
+    return groups
 
 
 @with_tx

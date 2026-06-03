@@ -1,4 +1,4 @@
-﻿from string import Template
+from string import Template
 
 import pyrogram
 
@@ -86,7 +86,17 @@ async def set_greeting_command(
 @pyrogram.Client.on_message(pyrogram.filters.new_chat_members, group=1)
 async def greeting_new_member(client: pyrogram.Client, message: pyrogram.types.Message):
     chat = message.chat
+    if chat is None:
+        return
+
+    me = client.me
+    if me is not None and any(member.id == me.id for member in message.new_chat_members):
+        await database.upsert_chat(chat)
+        logger.info(f"Waku joined Telegram group: title={chat.title!r} id={chat.id}")
+
     db_chat = await database.get_chat_by_id(chat.id)
+    if db_chat is None:
+        db_chat = await database.upsert_chat(chat)
     chat_config = db_chat.chat_config
     if not chat_config.greeting:
         return

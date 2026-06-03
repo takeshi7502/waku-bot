@@ -140,6 +140,16 @@ class UserChatAssociation(Base):
     is_bot_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     promoted_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
+    member_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    member_tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    member_is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    member_privileges: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_member_sync_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    gay_mode_previous_tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    gay_mode_applied: Mapped[bool] = mapped_column(Boolean, default=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

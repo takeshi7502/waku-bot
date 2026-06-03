@@ -1,4 +1,7 @@
-﻿from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
 
 import sqlalchemy
 import sqlalchemy.dialects
@@ -12,6 +15,7 @@ from waku.config import app_config, runtime_config
 
 from .db import AsyncSessionFactory, with_session, with_tx
 from .models import ChatData, UserChatAssociation, UserData
+from .user import upsert_user
 
 _association_cache: set[tuple[int, int]] = set()
 
@@ -401,3 +405,200 @@ async def change_user_waifu_in_chat(
         return None
     association.waifu_id = new_waifu.id
     return new_waifu
+
+
+def _member_status_value(member: Any) -> str | None:
+    status = getattr(member, "status", None)
+    if status is None:
+        return None
+    return getattr(status, "value", str(status))
+
+
+def _member_is_admin(member: Any) -> bool:
+    status = _member_status_value(member)
+    return status in {"owner", "administrator"}
+
+
+def _member_privileges(member: Any) -> dict | None:
+    privileges = getattr(member, "privileges", None)
+    if privileges is None:
+        privileges = getattr(member, "permissions", None)
+    if privileges is None:
+        return None
+    data: dict[str, Any] = {}
+    for key, value in vars(privileges).items():
+        if key.startswith("_"):
+            continue
+        if isinstance(value, (bool, int, str)) or value is None:
+            data[key] = value
+    return data
+
+
+def _member_tag(member: Any) -> str | None:
+    return getattr(member, "custom_title", None) or getattr(member, "title", None)
+
+
+@with_tx
+async def upsert_member_snapshot(
+    chat: ChatData,
+    member: Any,
+    session: AsyncSession | None = None,
+) -> UserChatAssociation | None:
+    """Store a Telegram chat member snapshot for a group."""
+    assert session is not None
+    user = getattr(member, "user", None)
+    if user is None or getattr(user, "id", None) is None:
+        return None
+    db_user = await upsert_user(user, session)
+    association = await get_association(db_user.id, chat.id, session)
+    if association is None:
+        association = UserChatAssociation(user_id=db_user.id, chat_id=chat.id)
+        session.add(association)
+        _association_cache.add((db_user.id, chat.id))
+    association.member_status = _member_status_value(member)
+    association.member_tag = _member_tag(member)
+    association.member_is_admin = _member_is_admin(member)
+    association.member_privileges = _member_privileges(member)
+    association.last_member_sync_at = datetime.now().astimezone()
+    return association
+
+
+@with_session
+async def get_chat_member_snapshots(
+    chat_id: int,
+    include_bots: bool = False,
+    session: AsyncSession | None = None,
+) -> Sequence[tuple[UserChatAssociation, UserData]]:
+    assert session is not None
+    stmt = (
+        sqlalchemy.select(UserChatAssociation, UserData)
+        .join(UserData, UserChatAssociation.user_id == UserData.id)
+        .where(UserChatAssociation.chat_id == chat_id)
+        .order_by(UserData.full_name.asc(), UserData.id.asc())
+    )
+    if not include_bots:
+        stmt = stmt.where(sqlalchemy.not_(UserData.is_bot))
+    result = await session.execute(stmt)
+    return result.all()
+
+
+@dataclass
+class MemberResolveResult:
+    user_id: int | None
+    matches: list[tuple[int, str, str | None, str | None]]
+    reason: str | None = None
+
+
+@with_session
+async def resolve_member_by_name(
+    chat_id: int,
+    target: str,
+    session: AsyncSession | None = None,
+) -> MemberResolveResult:
+    """Resolve a stored group member by username, full name, or member tag."""
+    assert session is not None
+    normalized = target.strip().casefold().lstrip("@")
+    if not normalized:
+        return MemberResolveResult(None, [], "empty")
+    stmt = (
+        sqlalchemy.select(UserData, UserChatAssociation)
+        .join(
+            UserChatAssociation,
+            (UserChatAssociation.user_id == UserData.id)
+            & (UserChatAssociation.chat_id == chat_id),
+        )
+        .where(sqlalchemy.not_(UserData.is_bot))
+    )
+    result = await session.execute(stmt)
+    rows = list(result.all())
+
+    def as_match(row) -> tuple[int, str, str | None, str | None]:
+        user, assoc = row
+        return (user.id, user.full_name, user.username, assoc.member_tag)
+
+    exact_username = [
+        row for row in rows if row[0].username and row[0].username.casefold() == normalized
+    ]
+    if len(exact_username) == 1:
+        return MemberResolveResult(exact_username[0][0].id, [as_match(exact_username[0])])
+    if len(exact_username) > 1:
+        return MemberResolveResult(None, [as_match(row) for row in exact_username], "ambiguous")
+
+    exact_name = [row for row in rows if row[0].full_name.casefold() == normalized]
+    if len(exact_name) == 1:
+        return MemberResolveResult(exact_name[0][0].id, [as_match(exact_name[0])])
+    if len(exact_name) > 1:
+        return MemberResolveResult(None, [as_match(row) for row in exact_name], "ambiguous")
+
+    exact_tag = [
+        row
+        for row in rows
+        if row[1].member_tag and row[1].member_tag.casefold() == normalized
+    ]
+    if len(exact_tag) == 1:
+        return MemberResolveResult(exact_tag[0][0].id, [as_match(exact_tag[0])])
+    if len(exact_tag) > 1:
+        return MemberResolveResult(None, [as_match(row) for row in exact_tag], "ambiguous")
+
+    partial = [
+        row
+        for row in rows
+        if normalized in row[0].full_name.casefold()
+        or (row[0].username and normalized in row[0].username.casefold())
+        or (row[1].member_tag and normalized in row[1].member_tag.casefold())
+    ]
+    if len(partial) == 1:
+        return MemberResolveResult(partial[0][0].id, [as_match(partial[0])])
+    if len(partial) > 1:
+        return MemberResolveResult(None, [as_match(row) for row in partial], "ambiguous")
+    return MemberResolveResult(None, [], "not_found")
+
+
+@with_tx
+async def mark_gay_mode_tag(
+    chat_id: int,
+    user_id: int,
+    previous_tag: str | None,
+    session: AsyncSession | None = None,
+) -> None:
+    assert session is not None
+    association = await session.get(UserChatAssociation, (user_id, chat_id))
+    if association is None:
+        return
+    association.gay_mode_previous_tag = previous_tag
+    association.gay_mode_applied = True
+
+
+@with_session
+async def get_gay_mode_applied_members(
+    chat_id: int,
+    session: AsyncSession | None = None,
+) -> Sequence[tuple[UserChatAssociation, UserData]]:
+    assert session is not None
+    stmt = (
+        sqlalchemy.select(UserChatAssociation, UserData)
+        .join(UserData, UserChatAssociation.user_id == UserData.id)
+        .where(
+            UserChatAssociation.chat_id == chat_id,
+            UserChatAssociation.gay_mode_applied.is_(True),
+        )
+        .order_by(UserData.full_name.asc(), UserData.id.asc())
+    )
+    result = await session.execute(stmt)
+    return result.all()
+
+
+@with_tx
+async def clear_gay_mode_state(
+    chat_id: int,
+    user_id: int,
+    restored_tag: str | None = None,
+    session: AsyncSession | None = None,
+) -> None:
+    assert session is not None
+    association = await session.get(UserChatAssociation, (user_id, chat_id))
+    if association is None:
+        return
+    association.member_tag = restored_tag
+    association.gay_mode_previous_tag = None
+    association.gay_mode_applied = False

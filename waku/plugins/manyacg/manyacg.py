@@ -1,4 +1,4 @@
-﻿import html
+import html
 import io
 import random
 
@@ -143,7 +143,7 @@ async def parse_artwork(client: PyrogramClient, message: pyrogram.types.Message)
         logger.error(f"parse_artwork error: {e.__class__.__name__}:{e}")
 
 
-@PyrogramClient.on_message(pyrogram.filters.command("setu"), group=0)
+@PyrogramClient.on_message(pyrogram.filters.command("seg"), group=0)
 async def setu_command(client: PyrogramClient, message: pyrogram.types.Message):
     if not manyacg_client:
         return

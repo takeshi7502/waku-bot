@@ -1,6 +1,12 @@
 bot:
   msg:
     lang_changed: Đã đổi ngôn ngữ sang {lang}
+    private_start: |
+      Nya~
+      Bạn có thể dùng /lang để đổi ngôn ngữ của bot.
+    group_start: |
+      Hi~
+      Bạn có thể dùng /lang để đổi ngôn ngữ của bot trong nhóm này.
     lang_select_private: "Chọn ngôn ngữ bạn muốn sử dụng:"
     lang_select_group: "Chọn ngôn ngữ cho nhóm này:"
     no_permission_group: Bạn không có quyền quản lý bot trong nhóm này!
@@ -12,7 +18,9 @@ bot:
     refreshing_avatar: Đang làm mới avatar của bạn...
     cleanning: waku đang dọn dẹp căn phòng...
     sync_members_cd: Đừng dùng lệnh này quá thường xuyên! Vui lòng thử lại sau.
-    sync_members_done: Đồng bộ xong! Đã dọn {count} thành viên.
+    sync_members_done: Đồng bộ xong! Đã quét {scanned} thành viên, cập nhật {updated}, dọn {count} thành viên cũ.
+    sync_members_start: Đang đồng bộ danh sách thành viên...
+    sync_members_error: Thất bại rồi, hãy thử cấp quyền quản trị viên cho bot rồi thử lại.
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -61,7 +69,7 @@ bot:
       /t - Nhận danh hiệu | Trao danh hiệu
       /td - Gỡ danh hiệu của bạn
       /sett - Đổi quyền cho lệnh /t
-      /setu - Xin ảnh nóng xíu (/ω＼*)
+      /seg - Xin ảnh nóng xíu (/ω＼*)
       /greet - Đặt tin nhắn chào mừng của nhóm
       /id - Lấy ID chat
       /ip - Tra cứu thông tin IP/tên miền
@@ -148,6 +156,12 @@ bot:
       destroy_success: Bạn đã phá hủy chiếc chai này
       not_found: Không tìm thấy chiếc chai này
       seek_result: Chiếc chai này được {sender} ném ra biển lúc {created_at}
+      seek_result_admin: |
+        Chiếc chai này được {sender} ném ra biển lúc {created_at}
+        ID người gửi: <code>{sender_id}</code>
+      pick_failed: Bạn lang thang bên bờ biển rất lâu, nhưng biển chỉ trả lại một exception.
+      ban_no_permission: Bạn không có quyền dùng lệnh này.
+      ban_success: Đã cấm người dùng {user_id}, đã xóa {count} chai.
       pick_disabled_in_chat: Ở đây không cho nhặt chai
       reply_prompt: Chọn cách bạn muốn trả lời
       reply_waiting: Vui lòng trả lời trực tiếp vào tin nhắn chai này
@@ -224,6 +238,14 @@ bot:
       rendered: "Đã render! Thời gian: {time}ms"
       timeout: Render quá thời gian, vui lòng thử lại sau.
       error: "Render thất bại: {error}"
+    randmyavatar:
+      service_unavailable: Dịch vụ manyacg hoặc aniobjcut chưa được bật.
+      processing: Đang đổi avatar...
+      fetch_failed: Lấy ảnh thất bại, vui lòng thử lại sau.
+      success: |
+        Đổi avatar thành công!
+        Tác phẩm: <a href='{url}'>{title}</a>
+      failed: "Đổi avatar thất bại: {error}"
     waifu:
       disabled: Tính năng waifu không được phép dùng ở đây.
       not_found: Hiện tại bạn chưa có waifu vì mình không tìm thấy thành viên nào khác trong dữ liệu.
@@ -240,8 +262,8 @@ bot:
       marry_self: (。・ω・。) Một ngày nào đó sẽ có người từ phương xa đến với bạn.
       marry_not_user: (￣ε(#￣) Đừng xen vào chuyện của người khác nào.
       already_married: Bạn đã kết hôn với người này rồi!
-      already_married_other: （＞人＜；）Người này đã ở bên người khác rồi. Chúc bạn tìm được người phù hợp.
-      user_already_married_other: ∑( 口 || Bạn đã có waifu rồi, đừng chạy theo người khác nữa!
+      already_married_other: (＞﹏＜) Người này đã ở bên người khác rồi. Chúc bạn tìm được người phù hợp.
+      user_already_married_other: (；ﾟДﾟ) Bạn đã có waifu rồi, đừng chạy theo người khác nữa!
       marry_ask: "{waifu}, bạn có đồng ý cưới {user} không?"
       marry_success: "Chúc mừng hôn lễ của {user} và {waifu}~"
       marry_refused: "(´。＿。｀) Bạn đã từ chối lời cầu hôn. Có những người, lỡ mất rồi là mất mãi..."
@@ -257,6 +279,11 @@ bot:
         Nhắc tên khi được chọn: {mention}
         Đã kết hôn: {married}
         ID waifu đã kết hôn: {married_waifu_id}
+      change_married: Bạn đã kết hôn với ai đó rồi, không thể đổi waifu nữa.
+      change_failed: Thất bại rồi, vui lòng thử lại sau.
+      change_not_enough_coins: Rất tiếc, đổi waifu thất bại rồi.
+      change_not_enough_coins_scumbag: Hết lựa chọn khác cho hôm nay rồi đó!
+      change_same: Waifu hôm nay của bạn vẫn là người đó nha~
     quote:
       probability_usage: Xác suất gửi trích dẫn ngẫu nhiên phải là số thập phân nhỏ hơn 1. Đặt số âm để tắt lệnh /qrand.
       probability_invalid: Đừng nhập thứ kỳ lạ nhé (//▲//)
@@ -345,6 +372,11 @@ bot:
     quotes_description: Gõ q [từ khóa] để tìm các trích dẫn bạn có thể xem.
     quotes_message: Nhấn nút bên dưới để tìm trích dẫn.
     quotes_button: 🔍
+    resolve_button_noop: Thiếu nữ đang cầu nguyện...
+    resolve_error: Phân tích thông tin nhóm thất bại...
+    pick_bottle_title: Nhặt chai
+    pick_bottle_description: Nhặt một chiếc chai trôi dạt từ đại dương.
+    pick_bottle_quering: Đang đi tới bờ biển...
   cmd:
     start: Một chạm meow|Gọi menu
     waifu: Waifu hôm nay!
@@ -357,7 +389,7 @@ bot:
     sett: Đặt quyền danh hiệu
     id: Lấy ID chat
     ip: Lấy thông tin IP
-    setu: Xin ảnh nóng
+    seg: Xin ảnh nóng
     config: Đổi cài đặt nhóm
     greet: Đặt tin nhắn chào mừng
     help: Trợ giúp|Thêm tính năng
@@ -408,6 +440,7 @@ bot:
     waifu:
       remove: Xóa (Admin)
       marry: Cưới cô ấy!
+      change: Đổi người khác
       remove_confirm: Xóa
       remove_cancel: Hủy
       agree_marry_waifu: Đồng ý!
@@ -421,6 +454,7 @@ bot:
     title_permissions:
       can_change_info: Đổi thông tin
       can_delete_messages: Xóa tin nhắn
+      can_manage_tags: Quản lý tag
       can_edit_messages: Sửa tin nhắn
       can_restrict_members: Hạn chế thành viên
       can_invite_users: Mời người dùng

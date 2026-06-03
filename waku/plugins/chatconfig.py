@@ -1,3 +1,5 @@
+import asyncio
+
 import pyrogram
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -5,16 +7,30 @@ from waku import common, database
 from waku.database.models import ChatConfig
 from waku.i18n import i18n
 
+_SAVE_AUTO_DELETE_SECONDS = 5
+
+
+async def _delete_message_later(
+    message: pyrogram.types.Message | None,
+    delay: int = _SAVE_AUTO_DELETE_SECONDS,
+) -> None:
+    if message is None:
+        return
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
 
 class ChatConfigMarkup:
     def __init__(self, chat_config: ChatConfig, lang: str = "zh-CN"):
         self.chat_config = chat_config
         self.lang = lang
 
-    def get_status_emoji(self, boolean: bool):
-        if boolean:
-            return "✔️"
-        return "❌"
+    def format_toggle_label(self, text: str, boolean: bool):
+        status = "✔️" if boolean else "❌"
+        return f"{status} {text}"
 
     def get_callback_data(self, key: str):
         return f"config_chat toggle {key}"
@@ -24,67 +40,67 @@ class ChatConfigMarkup:
             [
                 [
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.waifu', locale=self.lang)} {self.get_status_emoji(self.chat_config.waifu_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.waifu', locale=self.lang), self.chat_config.waifu_enabled)}",
                         callback_data=self.get_callback_data("waifu_enabled"),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.delete_events', locale=self.lang)} {self.get_status_emoji(self.chat_config.delete_events_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.delete_events', locale=self.lang), self.chat_config.delete_events_enabled)}",
                         callback_data=self.get_callback_data("delete_events_enabled"),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.quote_pin_message', locale=self.lang)} {self.get_status_emoji(self.chat_config.quote_pin_message)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.quote_pin_message', locale=self.lang), self.chat_config.quote_pin_message)}",
                         callback_data=self.get_callback_data("quote_pin_message"),
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.ai_reply', locale=self.lang)} {self.get_status_emoji(self.chat_config.ai_reply)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.ai_reply', locale=self.lang), self.chat_config.ai_reply)}",
                         callback_data=self.get_callback_data("ai_reply"),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.ai_comment', locale=self.lang)} {self.get_status_emoji(self.chat_config.ai_comment)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.ai_comment', locale=self.lang), self.chat_config.ai_comment)}",
                         callback_data=self.get_callback_data("ai_comment"),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.group_memory_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.group_memory_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.group_memory_enabled', locale=self.lang), self.chat_config.group_memory_enabled)}",
                         callback_data=self.get_callback_data("group_memory_enabled"),
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.setu_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.setu_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.setu_enabled', locale=self.lang), self.chat_config.setu_enabled)}",
                         callback_data=self.get_callback_data("setu_enabled"),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.unpin_channel_pin_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.unpin_channel_pin_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.unpin_channel_pin_enabled', locale=self.lang), self.chat_config.unpin_channel_pin_enabled)}",
                         callback_data=self.get_callback_data(
                             "unpin_channel_pin_enabled"
                         ),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.convert_b23_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.convert_b23_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.convert_b23_enabled', locale=self.lang), self.chat_config.convert_b23_enabled)}",
                         callback_data=self.get_callback_data("convert_b23_enabled"),
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.parse_artwork_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.parse_artwork_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.parse_artwork_enabled', locale=self.lang), self.chat_config.parse_artwork_enabled)}",
                         callback_data=self.get_callback_data("parse_artwork_enabled"),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.pick_bottle_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.pick_bottle_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.pick_bottle_enabled', locale=self.lang), self.chat_config.pick_bottle_enabled)}",
                         callback_data=self.get_callback_data("pick_bottle_enabled"),
                     ),
                 ],
                 [
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.ai_reply_other_bots_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.ai_reply_other_bots_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.ai_reply_other_bots_enabled', locale=self.lang), self.chat_config.ai_reply_other_bots_enabled)}",
                         callback_data=self.get_callback_data(
                             "ai_reply_other_bots_enabled"
                         ),
                     ),
                     InlineKeyboardButton(
-                        f"{i18n.t('bot.button.chat_config.agent_group_manage_enabled', locale=self.lang)} {self.get_status_emoji(self.chat_config.agent_group_manage_enabled)}",
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.agent_group_manage_enabled', locale=self.lang), self.chat_config.agent_group_manage_enabled)}",
                         callback_data=self.get_callback_data(
                             "agent_group_manage_enabled"
                         ),
@@ -195,4 +211,6 @@ async def config_chat(
             text=i18n.t("bot.msg.group_config_saved", locale=lang),
             reply_markup=None,
         )
+        asyncio.create_task(_delete_message_later(callback_query.message))
+        asyncio.create_task(_delete_message_later(callback_query.message.reply_to_message))
         return

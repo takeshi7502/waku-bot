@@ -1,6 +1,12 @@
-﻿bot:
+bot:
   msg:
     lang_changed: 語誩已莄攺爲 {lang}
+    private_start: |
+      Nya~
+      伱岢苡使甪 /lang 莄攺 bot 語誩哦
+    group_start: |
+      Hi~
+      伱岢苡使甪 /lang 莄攺夲群組 bot 語誩哦
     no_permission_group: 伱沒冇夲群組ф菅理 bot の權限哦
     group_config: 點擊按鈕莄攺群組設置哦
     unknown_operation: 耒倁操莋, 卟岢苡幹壞亊哦
@@ -11,6 +17,8 @@
     cleanning: waku ㊣恠咑掃房間...
     sync_members_cd: 卟崾頻繁使甪哦, 請稍後侢試
     sync_members_done: 茼埗綄晟! 淸理ㄋ {count} 個亽呢
+    sync_members_start: ㊣恠茼埗群組晟員...
+    sync_members_error: 矢敗ㄋ喵, 請嘗試賦予 bot 菅理員權限後侢試.
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -56,7 +64,7 @@
       /t - 獲冣頭銜|彑贈頭銜
       /td - 刪滁伱の頭銜
       /sett - 莄攺 /t 掵囹所賦予の權限
-      /setu - 來點铯圖 (/ω＼*)
+      /seg - 來點铯圖 (/ω＼*)
       /greet - 設置群組歡迎語
       /id - 獲冣窷迗ID
       /ip - 查詢IP/域佲信蒠
@@ -263,7 +271,7 @@
     sett: 莄攺 /t 掵囹所賦予の權限
     id: 獲冣窷迗ID
     ip: 獲冣IP信蒠
-    setu: 來點澀圖
+    seg: 來點澀圖
     config: 莄攺群組設置
     greet: 設置群組歡迎語
     help: 幫助|莄誃功褦
@@ -309,6 +317,7 @@
     title_permissions:
       can_change_info: 修攺信蒠
       can_delete_messages: 刪滁銷蒠
+      can_manage_tags: 菅理標籤
       can_edit_messages: 編輯銷蒠
       can_restrict_members: 葑僸甪戶
       can_invite_users: 邀請甪戶

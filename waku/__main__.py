@@ -115,7 +115,7 @@ async def init_bot(client: Client = client):
         ),
         BotCommand("help", i18n.t("bot.cmd.help", locale=app_config.lang)),
         BotCommand("lang", i18n.t("bot.cmd.lang", locale=app_config.lang)),
-        BotCommand("setu", i18n.t("bot.cmd.setu", locale=app_config.lang)),
+        BotCommand("seg", i18n.t("bot.cmd.seg", locale=app_config.lang)),
         BotCommand(
             "throwbottle", i18n.t("bot.cmd.throwbottle", locale=app_config.lang)
         ),

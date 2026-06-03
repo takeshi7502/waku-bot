@@ -1,4 +1,4 @@
-﻿bot:
+bot:
   msg:
     private_start: |
       Nya~
@@ -67,7 +67,7 @@
       /t - 获取头衔|互赠头衔
       /td - 删除你的头衔
       /sett - 更改 /t 命令所赋予的权限
-      /setu - 来点色图 (/ω＼*)
+      /seg - 来点色图 (/ω＼*)
       /greet - 设置群组欢迎语
       /id - 获取聊天ID
       /ip - 查询IP/域名信息

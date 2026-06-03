@@ -1,4 +1,4 @@
-﻿from pyrogram import filters
+from pyrogram import filters
 from pyrogram.client import Client
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.types import ChatMemberUpdated, Message
@@ -46,6 +46,8 @@ async def chat_member_updated(client: Client, chat_member_updated: ChatMemberUpd
     db_chat = await database.upsert_chat(chat)
     if not db_user or not db_chat:
         return
+    if new_obj is not None:
+        await database.upsert_member_snapshot(db_chat, new_obj)
     # if old_obj is None and new_obj is not None:
     #     # Joined the chat
     #     logger.info(f"[{chat.id}]({user.id}): {user.full_name} joined the chat")
@@ -98,10 +100,18 @@ async def sync_chat_members(client: Client, message: Message):
         f"sync_members:{chat.id}", True, app_config.cachettl_sync_members
     )
     await message.reply_text(i18n.t("bot.msg.sync_members_start", locale=lang))
-    # 在数据库中删除已经不在群组中的用户
     try:
         current_members = client.get_chat_members(chat.id)
-        current_member_ids = {member.user.id async for member in current_members}
+        current_member_ids: set[int] = set()
+        updated = 0
+        async for member in current_members:
+            member_user = member.user
+            if member_user is None or member_user.id is None:
+                continue
+            current_member_ids.add(member_user.id)
+            snapshot = await database.upsert_member_snapshot(db_chat, member)
+            if snapshot is not None:
+                updated += 1
     except Exception as e:
         logger.error(f"Failed to get current members for chat {chat.id}: {e}")
         await message.reply_text(i18n.t("bot.msg.sync_members_error", locale=lang))
@@ -119,9 +129,13 @@ async def sync_chat_members(client: Client, message: Message):
             continue
         oks += 1
         await database.unset_chat_waifus_by_waifu(db_chat, user_id)
-    await message.reply_text(
-        i18n.t("bot.msg.sync_members_done", locale=lang).format(count=oks)
-    )
+    done_text = i18n.t("bot.msg.sync_members_done", locale=lang)
+    try:
+        done_text = done_text.format(count=oks, scanned=len(current_member_ids), updated=updated)
+    except KeyError:
+        done_text = done_text.format(count=oks)
+    await message.reply_text(done_text)
     logger.info(
-        f"Synced members for chat {chat.id} ({chat.title}), removed {oks} members"
+        f"Synced members for chat {chat.id} ({chat.title}), "
+        f"scanned {len(current_member_ids)}, updated {updated}, removed {oks} members"
     )

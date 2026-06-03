@@ -8,7 +8,7 @@
 
 一般情况下仅需要 Bot Token 和你的 ID 即可启动一个 waku 实例.
 
-下载 [docker-compose.yml](https://github.com/krau/waku-bot/blob/v2/docker-compose.yml) 和 [settings.toml](https://github.com/krau/waku-bot/blob/v2/settings.toml) 到同一目录下, 然后按需修改配置.
+下载 [docker-compose.yml](https://github.com/krau/kmua-bot/blob/v2/docker-compose.yml) 和 [settings.toml](https://github.com/krau/kmua-bot/blob/v2/settings.toml) 到同一目录下, 然后按需修改配置.
 
 
 ```bash

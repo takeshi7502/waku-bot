@@ -1,6 +1,12 @@
-﻿bot:
+bot:
   msg:
     lang_changed: 言語が {lang} に変更されました
+    private_start: |
+      Nya~
+      /lang でBotの言語を変更できます。
+    group_start: |
+      Hi~
+      このグループでは /lang でBotの言語を変更できます。
     no_permission_group: このグループでBotを管理する権限がありませんにゃ
     group_config: ボタンをタップしてグループ設定を変更してにゃ
     unknown_operation: 不明な操作です、いたずらは禁止にゃ！
@@ -11,6 +17,8 @@
     cleanning: wakuがルームをお掃除中だよ〜
     sync_members_cd: あまり連続で使わないでにゃ、少し待ってからもう一度ね
     sync_members_done: 同期完了！{count}人をお掃除したにゃ〜
+    sync_members_start: グループメンバーを同期中です...
+    sync_members_error: 失敗しました。Botに管理者権限を付与してから再試行してください。
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -56,7 +64,7 @@
       /t - 称号を取得|称号を交換
       /td - あなたの称号を削除
       /sett - /t コマンドの権限を変更
-      /setu - エッチな画像をお届け (／ω＼)
+      /seg - エッチな画像をお届け (／ω＼)
       /greet - グループウェルカムメッセージを設定
       /id - チャットIDを取得
       /ip - IP/ドメイン情報をクエリ
@@ -263,7 +271,7 @@
     sett: "/t コマンドの権限を変更"
     id: "チャットIDを取得"
     ip: "IP情報を取得"
-    setu: "エッチな画像をお届け"
+    seg: "エッチな画像をお届け"
     config: "グループ設定を変更"
     greet: "グループウェルカムメッセージを設定"
     help: "ヘルプ|その他の機能"
@@ -309,6 +317,7 @@
     title_permissions:
       can_change_info: "情報変更"
       can_delete_messages: "メッセージ削除"
+      can_manage_tags: "タグ管理"
       can_edit_messages: "メッセージ編集"
       can_restrict_members: "ユーザー制限"
       can_invite_users: "ユーザー招待"

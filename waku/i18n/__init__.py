@@ -69,6 +69,27 @@ class I18n:
         except (KeyError, TypeError):
             return None
 
+    def _fallback_text(self, key: str) -> str:
+        if key.startswith("bot.msg."):
+            return "Đang xử lý..."
+        if key.startswith("bot.button.") or key.startswith("bot.cmd."):
+            return key.rsplit(".", 1)[-1].replace("_", " ").title()
+        return key
+
+    def _lookup_translation(self, key: str, locale: str) -> str | list[str] | None:
+        translation = self._get_nested_value(self.translations[locale], key)
+        if translation is not None:
+            return translation
+        for fallback_locale in (self.default_locale, "en", "zh-CN"):
+            if fallback_locale == locale or fallback_locale not in self.translations:
+                continue
+            translation = self._get_nested_value(
+                self.translations[fallback_locale], key
+            )
+            if translation is not None:
+                return translation
+        return None
+
     def t(self, key: str, locale: str = "") -> str:
         """
         翻译指定的键
@@ -89,15 +110,9 @@ class I18n:
             else:
                 return key
 
-        translation = self._get_nested_value(self.translations[locale], key)
+        translation = self._lookup_translation(key, locale)
 
-        if translation is None and locale != self.default_locale:
-            if self.default_locale in self.translations:
-                translation = self._get_nested_value(
-                    self.translations[self.default_locale], key
-                )
-
-        return translation if translation is not None else key  # type:ignore
+        return translation if translation is not None else self._fallback_text(key)  # type:ignore
 
     def trl(self, key: str, locale: str = "") -> str:
         """
@@ -112,19 +127,11 @@ class I18n:
             else:
                 return key
 
-        translation = self._get_nested_value(self.translations[locale], key)
+        translation = self._lookup_translation(key, locale)
 
         if isinstance(translation, list):
             return choice(translation)
-        elif translation is None and locale != self.default_locale:
-            if self.default_locale in self.translations:
-                translation = self._get_nested_value(
-                    self.translations[self.default_locale], key
-                )
-                if isinstance(translation, list):
-                    return choice(translation)
-
-        return translation if translation is not None else key
+        return translation if translation is not None else self._fallback_text(key)
 
     def get_available_locales(self) -> list[str]:
         return list(self.available_locales)

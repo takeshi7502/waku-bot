@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import html
 import json
 
@@ -11,6 +11,21 @@ from waku.common.utils import get_reply_target
 from waku.logger import logger
 
 from . import utils
+
+_SAVE_AUTO_DELETE_SECONDS = 5
+
+
+async def _delete_message_later(
+    message: pyrogram.types.Message | None,
+    delay: int = _SAVE_AUTO_DELETE_SECONDS,
+) -> None:
+    if message is None:
+        return
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 
 @PyrogramClient.on_message(
@@ -149,7 +164,7 @@ async def set_title_permissions(
 
 
 @PyrogramClient.on_callback_query(
-    pyrogram.filters.regex(r"^set_title_permissions\s+\w+$"),
+    pyrogram.filters.regex(r"^set_title_permissions\s+(toggle\s+\w+|save)$"),
     group=0,
 )
 async def set_title_permissions_callback(
@@ -168,7 +183,23 @@ async def set_title_permissions_callback(
             cache_time=60,
         )
         return
-    permission = query.data.split()[1]
+    data = str(query.data).split()
+    action = data[1]
+    if action == "save":
+        await query.message.edit_text(
+            i18n.t("bot.msg.group_config_saved", locale=chat_config.lang),
+            reply_markup=None,
+        )
+        asyncio.create_task(_delete_message_later(query.message))
+        asyncio.create_task(_delete_message_later(query.message.reply_to_message))
+        return
+    if action != "toggle" or len(data) < 3:
+        await query.answer(
+            i18n.t("bot.msg.unknown_operation", locale=chat_config.lang),
+            show_alert=True,
+        )
+        return
+    permission = data[2]
     permissions = chat_config.title_permissions or {}
     if isinstance(permissions, str):
         permissions = json.loads(permissions)

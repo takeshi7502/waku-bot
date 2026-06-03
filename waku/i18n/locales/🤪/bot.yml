@@ -1,6 +1,12 @@
-﻿bot:
+bot:
   msg:
     lang_changed: 語🗣已🕒✍爲 {lang}
+    private_start: |
+      Nya~
+      🤟🉑👼用 /lang 🕒✍ bot 語🗣😦
+    group_start: |
+      Hi~
+      🤟🉑👼用 /lang 🕒✍📓👨‍👩‍👧‍👦 bot 語🗣😦
     no_permission_group: 🤟沒🈶📓👨‍👩‍👧‍👦組🀄🧪💇 bot 🇩權🧵😦
     group_config: 點擊🖐鈕🕒✍👨‍👩‍👧‍👦組設📍😦
     unknown_operation: 🈚🤓🤸📝, 🙅‍♂️🉑以幹壞🍅😦
@@ -11,6 +17,8 @@
     cleanning: waku ➕📍👊掃🏠間...
     sync_members_cd: 🙅‍♂️👉頻💐👼用😦, 請⏱後👋試
     sync_members_done: 👬🚶🔚🍊! 🍶💇了 {count} 個🧑❔
+    sync_members_start: ➕📍👬🚶👨‍👩‍👧‍👦組🍊員...
+    sync_members_error: 😥敗了喵, 請👋試🎖予 bot 🧪💇員權🧵後👋試.
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -80,7 +88,7 @@
       /t - 獲🛄頭銜|👫贈頭銜
       /td - 刪➗🤟🇩頭銜
       /sett - 🕒✍ /t 🛐📜🚾賦予🇩權🧵
-      /setu - 來點😍圖 (/ω＼*)
+      /seg - 來點😍圖 (/ω＼*)
       /greet - 設📍👨‍👩‍👧‍👦組歡🤝語
       /id - 獲🛄💬🌥ID
       /ip - 🛂詢IP/🗺📛✉️ℹ
@@ -445,7 +453,7 @@
 
     ip: 獲🛄IP✉️ℹ
 
-    setu: 來點澀圖
+    seg: 來點澀圖
 
     config: 🕒✍👨‍👩‍👧‍👦組設📍
 
@@ -532,6 +540,8 @@
       can_change_info: 👨‍🔧✍✉️ℹ
 
       can_delete_messages: 刪➗👨‍🚒ℹ
+
+      can_manage_tags: 🧪💇標籤
 
       can_edit_messages: 編輯👨‍🚒ℹ
 

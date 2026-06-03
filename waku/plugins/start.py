@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import html
 
 from pyrogram import enums, filters
@@ -226,6 +226,7 @@ async def start(client: Client, message: Message):
 
 @Client.on_message(filters.command("start") & filters.group, group=0)
 async def start_group(client: Client, message: Message):
+    await database.upsert_chat(message.chat)
     chat_config = await database.get_chat_config(message.chat)
     lang = chat_config.lang
     reply = await message.reply(

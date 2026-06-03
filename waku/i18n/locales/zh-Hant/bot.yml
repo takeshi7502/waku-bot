@@ -1,6 +1,12 @@
-﻿bot:
+bot:
   msg:
     lang_changed: 語言已更改爲 {lang}
+    private_start: |
+      Nya~
+      你可以使用 /lang 更改 bot 語言哦
+    group_start: |
+      Hi~
+      你可以使用 /lang 更改本群組 bot 語言哦
     no_permission_group: 你沒有本群組中管理 bot 的權限哦
     group_config: 點擊按鈕更改群組設置哦
     unknown_operation: 未知操作, 不可以幹壞事哦
@@ -11,6 +17,8 @@
     cleanning: waku 正在打掃房間...
     sync_members_cd: 不要頻繁使用哦, 請稍後再試
     sync_members_done: 同步完成! 清理了 {count} 個人呢
+    sync_members_start: 正在同步群組成員...
+    sync_members_error: 失敗了喵, 請嘗試賦予 bot 管理員權限後再試.
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -56,7 +64,7 @@
       /t - 獲取頭銜|互贈頭銜
       /td - 刪除你的頭銜
       /sett - 更改 /t 命令所賦予的權限
-      /setu - 來點色圖 (/ω＼*)
+      /seg - 來點色圖 (/ω＼*)
       /greet - 設置群組歡迎語
       /id - 獲取聊天ID
       /ip - 查詢IP/域名信息
@@ -263,7 +271,7 @@
     sett: 更改 /t 命令所賦予的權限
     id: 獲取聊天ID
     ip: 獲取IP信息
-    setu: 來點澀圖
+    seg: 來點澀圖
     config: 更改群組設置
     greet: 設置群組歡迎語
     help: 幫助|更多功能
@@ -309,6 +317,7 @@
     title_permissions:
       can_change_info: 修改信息
       can_delete_messages: 刪除消息
+      can_manage_tags: 管理標籤
       can_edit_messages: 編輯消息
       can_restrict_members: 封禁用戶
       can_invite_users: 邀請用戶

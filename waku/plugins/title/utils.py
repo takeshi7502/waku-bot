@@ -1,17 +1,41 @@
-﻿import json
+import json
 
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from waku import i18n
 
+_TITLE_PERMISSION_FALLBACKS = {
+    "can_change_info": "Change info",
+    "can_manage_tags": "Manage tags",
+    "can_delete_messages": "Delete messages",
+    "can_edit_messages": "Edit messages",
+    "can_restrict_members": "Restrict members",
+    "can_invite_users": "Invite users",
+    "can_promote_members": "Promote members",
+    "can_post_stories": "Post stories",
+    "can_edit_stories": "Edit stories",
+    "can_delete_stories": "Delete stories",
+    "can_manage_video_chats": "Manage video chats",
+    "can_manage_topics": "Manage topics",
+    "can_pin_messages": "Pin messages",
+}
+
+
+def _permission_label(permission: str, lang: str) -> str:
+    key = f"bot.button.title_permissions.{permission}"
+    text = i18n.t(key, locale=lang)
+    if text == key or text.startswith("bot.button."):
+        return _TITLE_PERMISSION_FALLBACKS.get(permission, permission)
+    return text
+
 
 def _permission_button(
     permission: str, enabled: bool, lang: str = "zh-CN"
 ) -> InlineKeyboardButton:
+    status = "✅" if enabled else "❌"
     return InlineKeyboardButton(
-        i18n.t(f"bot.button.title_permissions.{permission}", locale=lang)
-        + ("✅" if enabled else "❌"),
-        callback_data=f"set_title_permissions {permission}",
+        f"{status} {_permission_label(permission, lang)}",
+        callback_data=f"set_title_permissions toggle {permission}",
     )
 
 
@@ -38,4 +62,12 @@ class TitlePermissionsMarkup:
                 keyboard_row.append(_permission_button(permission, enabled, self.lang))
             keyboard.append(keyboard_row)
 
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    i18n.t("bot.button.chat_config.save", locale=self.lang),
+                    callback_data="set_title_permissions save",
+                )
+            ]
+        )
         return InlineKeyboardMarkup(keyboard)

@@ -1,5 +1,5 @@
 ﻿<div align="center">
-<img src="https://t.me/i/userpic/320/wakuv2bot.jpg" alt="waku" width="240">
+<img src="https://t.me/i/userpic/320/jinwakubot.jpg" alt="waku" width="240">
 
 # waku bot
 

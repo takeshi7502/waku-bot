@@ -1,6 +1,12 @@
 bot:
   msg:
     lang_changed: Language changed to {lang}
+    private_start: |
+      Nya~
+      You can use /lang to change the language of the bot.
+    group_start: |
+      Hi~
+      You can use /lang to change the language of the bot in this group.
     no_permission_group: You don't have permission to manage the bot in this group!
     group_config: Click the buttons to change group settings!
     unknown_operation: Unknown operation. No funny business!
@@ -10,7 +16,9 @@ bot:
     refreshing_avatar: Refreshing your avatar...
     cleanning: waku is tidying up the room...
     sync_members_cd: Don't use this too often! Please try again later.
-    sync_members_done: Sync complete! Cleaned up {count} members.
+    sync_members_done: Sync complete! Scanned {scanned} members, updated {updated}, cleaned up {count} old members.
+    sync_members_start: Syncing group members...
+    sync_members_error: Failed, please grant the bot admin permissions and try again.
     b23_converted: "{real_url}"
     b23_converted_group: |
       {real_url}
@@ -59,7 +67,7 @@ bot:
       /t - Get a title | Bestow a title
       /td - Remove your title
       /sett - Change permissions for the /t command
-      /setu - Gimme some lewds (/ω＼*)
+      /seg - Gimme some lewds (/ω＼*)
       /greet - Set the group welcome message
       /id - Get chat ID
       /ip - Look up IP/domain info
@@ -313,7 +321,7 @@ bot:
     sett: Set title permissions
     id: Get chat ID
     ip: Get IP info
-    setu: Gimme lewds
+    seg: Gimme lewds
     config: Change group settings
     greet: Set welcome message
     help: Help|More features
@@ -350,6 +358,7 @@ bot:
     waifu:
       remove: Remove (Admin)
       marry: Marry her!
+      change: Pick another one
       remove_confirm: Remove
       remove_cancel: Cancel
       agree_marry_waifu: Yay!
@@ -363,6 +372,7 @@ bot:
     title_permissions:
       can_change_info: Change Info
       can_delete_messages: Delete Messages
+      can_manage_tags: Manage Tags
       can_edit_messages: Edit Messages
       can_restrict_members: Restrict Members
       can_invite_users: Invite Users
