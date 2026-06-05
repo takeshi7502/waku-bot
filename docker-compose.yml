@@ -1,10 +1,10 @@
 services:
   waku:
-    image: ghcr.io/takeshi7502/waku-bot:v2
-    # Local source build option if CI image is unavailable:
-    # build:
-    #   context: .
-    # image: waku-bot:local
+    build:
+      context: .
+    image: waku-bot:local
+    # Registry image fallback if local build is unavailable:
+    # image: ghcr.io/takeshi7502/waku-bot:v2
     container_name: waku-bot
     restart: unless-stopped
     ports:
