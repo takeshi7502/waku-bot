@@ -159,7 +159,8 @@ async def init_bot(client: Client = client):
             "randmyavatar", i18n.t("bot.cmd.randmyavatar", locale=app_config.lang)
         ),
         BotCommand("reload", i18n.t("bot.cmd.reload", locale=app_config.lang)),
-        BotCommand("version", "Show runtime version"),
+        BotCommand("info", i18n.t("bot.cmd.info", locale=app_config.lang)),
+        BotCommand("config", i18n.t("bot.cmd.config", locale=app_config.lang)),
     ]
 
     # 构建命令字典用于检查

@@ -26,10 +26,11 @@ def _format_changed_fields(changed: list[str]) -> str:
 
 
 def _reload_status_text(status: str, changed: list[str], footer: str) -> str:
+    icon = "✅" if "success" in status.lower() else "🔄"
     changed_count = f"{len(changed)} fields" if changed else "No fields changed"
     return "\n".join(
         [
-            "<b>🔄 Waku Reload</b>",
+            f"<b>{icon} Waku Reload</b>",
             "",
             f"<b>Status:</b> <code>{status}</code>",
             f"<b>Changed:</b> <code>{changed_count}</code>",
@@ -167,7 +168,7 @@ async def reload_callback(client: Client, query: pyrogram.types.CallbackQuery):
     if action == "cancel":
         try:
             await query.message.edit_text(
-                "<b>🔄 Waku Reload</b>\n\n<i>Đã huỷ reload.</i>",
+                "<b>❌ Waku Reload</b>\n\n<i>Đã huỷ reload.</i>",
                 reply_markup=None,
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,
@@ -181,7 +182,7 @@ async def reload_callback(client: Client, query: pyrogram.types.CallbackQuery):
     success, msg, changed = reload_config()
     if not success:
         await query.message.edit_text(
-            f"<b>🔄 Waku Reload</b>\n\n<code>{msg}</code>",
+            f"<b>❌ Waku Reload</b>\n\n<code>{msg}</code>",
             reply_markup=None,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,

@@ -45,6 +45,9 @@ class PrivateStartBotMarkup:
                         callback_data="user_quote_manage",
                     ),
                 ],
+                [
+                    InlineKeyboardButton("Đóng", callback_data="delete_callback_query_message"),
+                ],
             ]
         )
 

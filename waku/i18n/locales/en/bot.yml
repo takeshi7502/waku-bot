@@ -334,9 +334,11 @@ bot:
     id: Get chat ID
     ip: Get IP info
     seg: Gimme lewds
-    config: Change group settings
+    config: Bot configuration
     greet: Set welcome message
     help: Help|More features
+    reload: Reload bot
+    info: Show saved bot groups
     infographic: Render infographic
   button:
     back: Back

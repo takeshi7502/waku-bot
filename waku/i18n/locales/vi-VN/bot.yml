@@ -419,6 +419,8 @@ bot:
     gift: Tặng quà cho bot
     randmyavatar: Đổi avatar bot ngẫu nhiên
     reload: Tải lại bot
+    info: Xem danh sách nhóm bot đã lưu
+    config: Xem và chỉnh cấu hình bot
     infographic: Render infographic
   button:
     back: Quay lại
