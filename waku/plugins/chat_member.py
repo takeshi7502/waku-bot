@@ -8,6 +8,12 @@ from waku import common, database
 from waku.config import app_config
 from waku.i18n import i18n
 from waku.logger import logger
+from waku.plugins.member_ops import (
+    acquire_group_member_operation,
+    describe_group_member_operation,
+    get_group_member_operation,
+    release_group_member_operation,
+)
 
 SYNC_MEMBERS_PROGRESS_INTERVAL = 25
 SYNC_MEMBERS_SAFE_DELAY_SECONDS = 0.15
@@ -27,18 +33,34 @@ def _format_sync_members_progress(
     scanned: int,
     updated: int,
     total: int | None,
+    skipped_existing: int = 0,
+    partial: bool = False,
 ) -> str:
     if total and total > 0:
-        return i18n.t("bot.msg.sync_members_progress", locale=lang).format(
+        text = i18n.t("bot.msg.sync_members_progress", locale=lang).format(
             bar=_sync_members_progress_bar(scanned, total),
             scanned=scanned,
             total=total,
             updated=updated,
         )
-    return i18n.t("bot.msg.sync_members_progress_unknown_total", locale=lang).format(
-        scanned=scanned,
-        updated=updated,
-    )
+    else:
+        text = i18n.t("bot.msg.sync_members_progress_unknown_total", locale=lang).format(
+            scanned=scanned,
+            updated=updated,
+        )
+    if skipped_existing:
+        text += f"\nĐã bỏ qua không đổi: {skipped_existing}"
+    if partial:
+        text += "\n⚠️ Đồng bộ chưa đủ tổng member, sẽ không xoá member vắng mặt trong lần scan này."
+    return text
+
+
+def _member_snapshot_tuple(member) -> tuple[str | None, str | None, bool]:
+    status = getattr(member, "status", None)
+    status_value = getattr(status, "value", str(status)) if status is not None else None
+    tag = getattr(member, "custom_title", None) or getattr(member, "title", None)
+    is_admin = status_value in {"owner", "administrator"}
+    return status_value, tag, is_admin
 
 
 async def _safe_edit_sync_status(status_message: Message, text: str) -> None:
@@ -132,71 +154,105 @@ async def sync_chat_members(client: Client, message: Message):
     if not await common.can_user_manage_bot_in_chat(user, chat):
         await message.reply_text(i18n.t("bot.msg.no_permission_group", locale=lang))
         return
+    running_op = get_group_member_operation(chat.id)
+    if running_op is not None:
+        await message.reply_text(f"Đang chạy {describe_group_member_operation(running_op)} cho group này, vui lòng chờ xong rồi thử lại.")
+        return
     if await common.memttlcache.get(f"sync_members:{chat.id}"):
         await message.reply_text(i18n.t("bot.msg.sync_members_cd", locale=lang))
+        return
+    operation = acquire_group_member_operation(chat.id, "syncmembers", getattr(user, "id", None))
+    if operation is None:
+        await message.reply_text("Đang có tác vụ member khác chạy trong group này.")
         return
     await common.memttlcache.set(
         f"sync_members:{chat.id}", True, app_config.cachettl_sync_members
     )
     status_message = await message.reply_text(i18n.t("bot.msg.sync_members_start", locale=lang))
     total_members: int | None = None
+    current_member_ids: set[int] = set()
+    updated = 0
+    skipped_existing = 0
+    scanned = 0
+    partial = False
+    stopped = False
     try:
-        total_members = await client.get_chat_members_count(chat.id)
-    except Exception as e:
-        logger.warning(f"Failed to get members count for chat {chat.id}: {e}")
-    try:
-        current_members = client.get_chat_members(chat.id)
-        current_member_ids: set[int] = set()
-        updated = 0
-        scanned = 0
-        async for member in current_members:
-            member_user = member.user
-            if member_user is None or member_user.id is None:
-                continue
-            scanned += 1
-            current_member_ids.add(member_user.id)
-            snapshot = await database.upsert_member_snapshot(db_chat, member)
-            if snapshot is not None:
-                updated += 1
-            if scanned % SYNC_MEMBERS_PROGRESS_INTERVAL == 0:
-                await _safe_edit_sync_status(
-                    status_message,
-                    _format_sync_members_progress(lang, scanned, updated, total_members),
-                )
-            await asyncio.sleep(SYNC_MEMBERS_SAFE_DELAY_SECONDS)
-    except Exception as e:
-        logger.error(f"Failed to sync members for chat {chat.id}: {e}")
-        error_text = i18n.t("bot.msg.sync_members_error_progress", locale=lang).format(
-            scanned=len(current_member_ids) if "current_member_ids" in locals() else 0,
-            updated=updated if "updated" in locals() else 0,
-            error=e.__class__.__name__,
-        )
-        await _safe_edit_sync_status(status_message, error_text)
-        return
-    await _safe_edit_sync_status(
-        status_message,
-        _format_sync_members_progress(lang, len(current_member_ids), updated, total_members),
-    )
-    db_associations = await database.get_chat_associations(chat.id)
-    db_member_ids = {assoc.user_id for assoc in db_associations}
-    to_remove = db_member_ids - current_member_ids
-    oks = 0
-    for user_id in to_remove:
-        ok = await database.remove_association(user_id, chat.id)
-        if not ok:
-            logger.warning(
-                f"Failed to remove association for user {user_id} in chat {chat.id}"
+        try:
+            total_members = await client.get_chat_members_count(chat.id)
+        except Exception as e:
+            logger.warning(f"Failed to get members count for chat {chat.id}: {e}")
+        existing_snapshots = await database.get_chat_member_snapshot_map(chat.id)
+        try:
+            current_members = client.get_chat_members(chat.id)
+            async for member in current_members:
+                member_user = member.user
+                if member_user is None or member_user.id is None:
+                    continue
+                scanned += 1
+                current_member_ids.add(member_user.id)
+                stored_snapshot = existing_snapshots.get(member_user.id)
+                if stored_snapshot is not None and stored_snapshot == _member_snapshot_tuple(member):
+                    skipped_existing += 1
+                else:
+                    snapshot = await database.upsert_member_snapshot(db_chat, member)
+                    if snapshot is not None:
+                        updated += 1
+                if scanned % SYNC_MEMBERS_PROGRESS_INTERVAL == 0:
+                    await _safe_edit_sync_status(
+                        status_message,
+                        _format_sync_members_progress(lang, scanned, updated, total_members, skipped_existing),
+                    )
+                if operation.stop_requested:
+                    stopped = True
+                    break
+                await asyncio.sleep(SYNC_MEMBERS_SAFE_DELAY_SECONDS)
+        except Exception as e:
+            logger.error(f"Failed to sync members for chat {chat.id}: {e}")
+            error_text = i18n.t("bot.msg.sync_members_error_progress", locale=lang).format(
+                scanned=scanned,
+                updated=updated,
+                error=e.__class__.__name__,
             )
-            continue
-        oks += 1
-        await database.unset_chat_waifus_by_waifu(db_chat, user_id)
-    done_text = i18n.t("bot.msg.sync_members_done", locale=lang)
-    try:
-        done_text = done_text.format(count=oks, scanned=len(current_member_ids), updated=updated)
-    except KeyError:
-        done_text = done_text.format(count=oks)
-    await _safe_edit_sync_status(status_message, done_text)
-    logger.info(
-        f"Synced members for chat {chat.id} ({chat.title}), "
-        f"scanned {len(current_member_ids)}, updated {updated}, removed {oks} members"
-    )
+            await _safe_edit_sync_status(status_message, error_text)
+            return
+        partial = bool(total_members and scanned < total_members)
+        if stopped:
+            partial = True
+        await _safe_edit_sync_status(
+            status_message,
+            _format_sync_members_progress(lang, scanned, updated, total_members, skipped_existing, partial),
+        )
+        oks = 0
+        if not partial:
+            db_associations = await database.get_chat_associations(chat.id)
+            db_member_ids = {assoc.user_id for assoc in db_associations}
+            to_remove = db_member_ids - current_member_ids
+            for user_id in to_remove:
+                ok = await database.remove_association(user_id, chat.id)
+                if not ok:
+                    logger.warning(
+                        f"Failed to remove association for user {user_id} in chat {chat.id}"
+                    )
+                    continue
+                oks += 1
+                await database.unset_chat_waifus_by_waifu(db_chat, user_id)
+        done_text = i18n.t("bot.msg.sync_members_done", locale=lang)
+        try:
+            done_text = done_text.format(count=oks, scanned=scanned, updated=updated)
+        except KeyError:
+            done_text = done_text.format(count=oks)
+        if skipped_existing:
+            done_text += f"\nĐã bỏ qua không đổi: {skipped_existing}"
+        if stopped:
+            done_text += f"\n🛑 Đã dừng syncmembers theo yêu cầu AI/admin tại {scanned}/{total_members or '?'}; không xoá member chưa thấy."
+        elif partial:
+            done_text += f"\n⚠️ Chỉ scan được {scanned}/{total_members}; không xoá member chưa thấy để tránh mất dữ liệu."
+        await _safe_edit_sync_status(status_message, done_text)
+        logger.info(
+            f"Synced members for chat {chat.id} ({chat.title}), "
+            f"scanned {scanned}, updated {updated}, skipped_existing {skipped_existing}, "
+            f"removed {oks} members, partial={partial}"
+        )
+    finally:
+        release_group_member_operation(chat.id, operation)
+

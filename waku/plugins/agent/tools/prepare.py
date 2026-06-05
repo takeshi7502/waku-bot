@@ -127,7 +127,7 @@ async def prepare_periodic_sticker(
     try:
         sticker_count = await sticker_vec.count(ctx.deps.chat_id)
         if sticker_count < MIN_STICKER_COUNT:
-            logger.info(
+            logger.debug(
                 f"send_sticker hidden: chat_id={ctx.deps.chat_id} "
                 f"stored={sticker_count}/{MIN_STICKER_COUNT}"
             )

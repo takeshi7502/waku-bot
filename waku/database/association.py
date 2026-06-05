@@ -482,6 +482,26 @@ async def get_chat_member_snapshots(
     return result.all()
 
 
+@with_session
+async def get_chat_member_snapshot_map(
+    chat_id: int,
+    session: AsyncSession | None = None,
+) -> dict[int, tuple[str | None, str | None, bool]]:
+    """Return compact stored member fields used to skip unchanged sync writes."""
+    assert session is not None
+    stmt = sqlalchemy.select(
+        UserChatAssociation.user_id,
+        UserChatAssociation.member_status,
+        UserChatAssociation.member_tag,
+        UserChatAssociation.member_is_admin,
+    ).where(UserChatAssociation.chat_id == chat_id)
+    result = await session.execute(stmt)
+    return {
+        user_id: (status, tag, bool(is_admin))
+        for user_id, status, tag, is_admin in result.all()
+    }
+
+
 @dataclass
 class MemberResolveResult:
     user_id: int | None

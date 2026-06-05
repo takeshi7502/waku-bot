@@ -1,18 +1,29 @@
 import asyncio
 import random
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 
+import pyrogram
 from pydantic_ai import RunContext
+from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import RPCError
-from pyrogram.types import ChatPermissions
+from pyrogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 
 from waku import common, database
 from waku.affection import get_affection_rank
 from waku.config import app_config
 from waku.database.models import UserChatAssociation, UserData
 from waku.logger import logger
+from waku.plugins.member_ops import (
+    acquire_group_member_operation,
+    describe_group_member_operation,
+    get_group_member_operation,
+    release_group_member_operation,
+    request_group_member_operation_stop,
+)
 
 from .. import datatype, state
 
@@ -101,7 +112,30 @@ async def _is_protected_bot_admin_or_owner(user_id: int, chat_id: int) -> bool:
 _SELF_MODERATION_ACTIONS = {"ban", "kick", "mute"}
 _SELF_MANAGEMENT_ACTIONS = _SELF_MODERATION_ACTIONS | {"set tag", "clear tag"}
 _MAX_MEMBER_TAG_LENGTH = 16
-_GAY_MODE_JOBS: dict[int, asyncio.Task] = {}
+_GAY_MODE_CALLBACK_PREFIX = "waku_gaymode"
+_GAY_MODE_PROGRESS_INTERVAL_SECONDS = 5.0
+_GAY_MODE_PROGRESS_BAR_WIDTH = 12
+
+
+@dataclass
+class GayModeJob:
+    chat_id: int
+    owner_id: int
+    mode: str
+    total: int
+    skipped: int
+    operation: object
+    task: asyncio.Task | None = None
+    progress_message: pyrogram.types.Message | None = None
+    stop_requested: bool = False
+    processed: int = 0
+    ok: int = 0
+    errors: int = 0
+    started_at: float = 0.0
+    last_progress_at: float = 0.0
+
+
+_GAY_MODE_JOBS: dict[int, GayModeJob] = {}
 _SELF_TARGET_ALIASES = {
     "self",
     "me",
@@ -748,80 +782,150 @@ async def preview_gay_mode(ctx: RunContext[datatype.ContextDeps]) -> str:
     )
 
 
+async def stop_syncmembers(ctx: RunContext[datatype.ContextDeps]) -> str:
+    """Stop a running /syncmembers job in this group immediately. Bot admins only; no confirmation needed."""
+    if refusal := await _ensure_true_bot_admin_access(ctx, "stop syncmembers"):
+        return refusal
+    operation = request_group_member_operation_stop(ctx.deps.chat_id, "syncmembers")
+    if operation is None:
+        running_op = get_group_member_operation(ctx.deps.chat_id)
+        if running_op is None:
+            return "No /syncmembers job is running in this group."
+        return f"Cannot stop /syncmembers because {describe_group_member_operation(running_op)} is running instead."
+    return "Stop request sent to /syncmembers. It will stop at the next safe checkpoint without confirmation."
+
+
+
 def _has_running_gay_mode_job(chat_id: int) -> bool:
-    task = _GAY_MODE_JOBS.get(chat_id)
-    return bool(task is not None and not task.done())
+    job = _GAY_MODE_JOBS.get(chat_id)
+    return bool(job is not None and job.task is not None and not job.task.done())
 
 
-async def _send_gay_mode_result(client, chat_id: int, text: str) -> None:
+def _gay_mode_bar(processed: int, total: int) -> str:
+    if total <= 0:
+        return ""
+    filled = min(_GAY_MODE_PROGRESS_BAR_WIDTH, round(processed / total * _GAY_MODE_PROGRESS_BAR_WIDTH))
+    return "█" * filled + "░" * (_GAY_MODE_PROGRESS_BAR_WIDTH - filled)
+
+
+def _elapsed_text(started_at: float) -> str:
+    elapsed = max(0, int(monotonic() - started_at))
+    minutes, seconds = divmod(elapsed, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _gay_mode_progress_text(job: GayModeJob, status: str) -> str:
+    title = "Gaymode" if job.mode == "activate" else "Hủy gaymode"
+    return "\n".join([
+        f"<b>{title} đang chạy...</b>",
+        f"<code>[{_gay_mode_bar(job.processed, job.total)}]</code> {job.processed}/{job.total}",
+        f"OK: <code>{job.ok}</code> | Skipped: <code>{job.skipped}</code> | Error: <code>{job.errors}</code>",
+        f"Elapsed: <code>{_elapsed_text(job.started_at)}</code>",
+        f"Group: <code>{job.chat_id}</code>",
+        f"Status: <code>{status}</code>",
+    ])
+
+
+def _gay_mode_stop_markup(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data=f"{_GAY_MODE_CALLBACK_PREFIX}|stop|{chat_id}")]])
+
+
+def _gay_mode_confirm_markup(chat_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅", callback_data=f"{_GAY_MODE_CALLBACK_PREFIX}|confirm_stop|{chat_id}"),
+        InlineKeyboardButton("❌", callback_data=f"{_GAY_MODE_CALLBACK_PREFIX}|cancel_stop|{chat_id}"),
+    ]])
+
+
+async def _edit_gay_mode_progress(job: GayModeJob, status: str, force: bool = False, final: bool = False) -> None:
+    now = monotonic()
+    if not force and now - job.last_progress_at < _GAY_MODE_PROGRESS_INTERVAL_SECONDS:
+        return
+    job.last_progress_at = now
+    markup = None if final else _gay_mode_stop_markup(job.chat_id)
     try:
-        await client.send_message(chat_id=chat_id, text=text)
+        if job.progress_message is None:
+            return
+        await job.progress_message.edit_text(_gay_mode_progress_text(job, status), reply_markup=markup)
     except Exception as e:
-        logger.warning(
-            f"Failed to send gay mode backend result to chat {chat_id}: "
-            f"{e.__class__.__name__}: {e}"
+        logger.debug(f"Failed to update gaymode progress for {job.chat_id}: {e}")
+
+
+async def _send_gay_mode_private_start(client, job: GayModeJob) -> None:
+    try:
+        job.progress_message = await client.send_message(
+            chat_id=job.owner_id,
+            text=_gay_mode_progress_text(job, "starting"),
+            reply_markup=_gay_mode_stop_markup(job.chat_id),
         )
+    except Exception as e:
+        logger.warning(f"Failed to send private gaymode progress to {job.owner_id}: {e}")
 
 
 async def _run_activate_gay_mode_job(
     client,
-    chat_id: int,
+    job: GayModeJob,
     targets: list[tuple[UserChatAssociation, UserData]],
-    skipped: int,
-    total: int,
 ) -> None:
-    ok = 0
-    for assoc, user in targets:
-        tag = f"gay {random.randint(0, 100)}%"
-        try:
-            await client.set_chat_member_tag(chat_id, user.id, tag=tag)
-            await database.mark_gay_mode_tag(chat_id, user.id, assoc.member_tag)
-            ok += 1
-        except Exception as e:
-            logger.warning(f"Gay mode stopped while setting tag for {user.id}: {e}")
-            await _send_gay_mode_result(
-                client,
-                chat_id,
-                "Gaymode đã dừng do lỗi. "
-                f"Đã kích hoạt trên {ok} người, bỏ qua {skipped} người. "
-                f"Lỗi tại {user.full_name} ({user.id}): {e.__class__.__name__}.",
-            )
-            return
-    await _send_gay_mode_result(
-        client,
-        chat_id,
-        f"Gaymode đã được kích hoạt trên {ok} người, bỏ qua {skipped} người.",
-    )
-    logger.info(f"Gay mode activation completed in chat {chat_id}: ok={ok}, skipped={skipped}, total={total}")
+    await _send_gay_mode_private_start(client, job)
+    try:
+        for assoc, user in targets:
+            if job.stop_requested:
+                await _edit_gay_mode_progress(job, "stopped by admin", force=True, final=True)
+                return
+            tag = f"gay {random.randint(0, 100)}%"
+            try:
+                await client.set_chat_member_tag(job.chat_id, user.id, tag=tag)
+                await database.mark_gay_mode_tag(job.chat_id, user.id, assoc.member_tag)
+                job.ok += 1
+                job.processed += 1
+                await _edit_gay_mode_progress(job, f"setting {user.id}")
+            except Exception as e:
+                job.errors += 1
+                logger.warning(f"Gay mode stopped while setting tag for {user.id}: {e}")
+                await _edit_gay_mode_progress(job, f"error at {user.id}: {e.__class__.__name__}", force=True, final=True)
+                return
+        await _edit_gay_mode_progress(job, "completed", force=True, final=True)
+        logger.info(f"Gay mode activation completed in chat {job.chat_id}: ok={job.ok}, skipped={job.skipped}, total={job.total}")
+    finally:
+        release_group_member_operation(job.chat_id, job.operation)
 
 
 async def _run_deactivate_gay_mode_job(
     client,
-    chat_id: int,
+    job: GayModeJob,
     rows: list[tuple[UserChatAssociation, UserData]],
 ) -> None:
-    ok = 0
-    for assoc, user in rows:
-        try:
-            await client.set_chat_member_tag(chat_id, user.id, tag=assoc.gay_mode_previous_tag)
-            await database.clear_gay_mode_state(chat_id, user.id, assoc.gay_mode_previous_tag)
-            ok += 1
-        except Exception as e:
-            logger.warning(f"Gay mode restore stopped for {user.id}: {e}")
-            await _send_gay_mode_result(
-                client,
-                chat_id,
-                "Hủy gaymode đã dừng do lỗi. "
-                f"Đã khôi phục {ok} người. "
-                f"Lỗi tại {user.full_name} ({user.id}): {e.__class__.__name__}.",
-            )
-            return
-    await _send_gay_mode_result(
-        client,
-        chat_id,
-        f"Đã hủy gaymode và khôi phục {ok} người.",
-    )
-    logger.info(f"Gay mode restore completed in chat {chat_id}: restored={ok}")
+    await _send_gay_mode_private_start(client, job)
+    try:
+        for assoc, user in rows:
+            if job.stop_requested:
+                await _edit_gay_mode_progress(job, "stopped by admin", force=True, final=True)
+                return
+            try:
+                await client.set_chat_member_tag(job.chat_id, user.id, tag=assoc.gay_mode_previous_tag)
+                await database.clear_gay_mode_state(job.chat_id, user.id, assoc.gay_mode_previous_tag)
+                job.ok += 1
+                job.processed += 1
+                await _edit_gay_mode_progress(job, f"restoring {user.id}")
+            except Exception as e:
+                job.errors += 1
+                logger.warning(f"Gay mode restore stopped for {user.id}: {e}")
+                await _edit_gay_mode_progress(job, f"error at {user.id}: {e.__class__.__name__}", force=True, final=True)
+                return
+        await _edit_gay_mode_progress(job, "completed", force=True, final=True)
+        logger.info(f"Gay mode restore completed in chat {job.chat_id}: restored={job.ok}")
+    finally:
+        release_group_member_operation(job.chat_id, job.operation)
+
+
+def _cleanup_gay_mode_job(chat_id: int, task: asyncio.Task) -> None:
+    job = _GAY_MODE_JOBS.get(chat_id)
+    if job is not None and job.task is task:
+        _GAY_MODE_JOBS.pop(chat_id, None)
 
 
 async def activate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
@@ -831,15 +935,21 @@ async def activate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool
     if not confirm:
         return await preview_gay_mode(ctx)
     chat_id = ctx.deps.chat_id
+    running_op = get_group_member_operation(chat_id)
+    if running_op is not None:
+        return f"Cannot start gaymode because {describe_group_member_operation(running_op)} is running for this group."
     if _has_running_gay_mode_job(chat_id):
         return "Gay mode backend is already running for this group. Wait for the final result."
     targets, skipped, total = await _gay_mode_targets(ctx)
-    task = asyncio.create_task(
-        _run_activate_gay_mode_job(ctx.deps.client, chat_id, targets, skipped, total)
-    )
-    _GAY_MODE_JOBS[chat_id] = task
-    task.add_done_callback(lambda _: _GAY_MODE_JOBS.pop(chat_id, None))
-    return "Gay mode backend started. I will send the final result when it finishes."
+    operation = acquire_group_member_operation(chat_id, "gaymode_activate", ctx.deps.user_id)
+    if operation is None:
+        return "Another member operation is already running for this group."
+    job = GayModeJob(chat_id=chat_id, owner_id=ctx.deps.user_id, mode="activate", total=len(targets), skipped=skipped, operation=operation, started_at=monotonic())
+    task = asyncio.create_task(_run_activate_gay_mode_job(ctx.deps.client, job, targets))
+    job.task = task
+    _GAY_MODE_JOBS[chat_id] = job
+    task.add_done_callback(lambda done_task: _cleanup_gay_mode_job(chat_id, done_task))
+    return "Gay mode backend started. Progress and final result will be sent in private chat."
 
 
 async def deactivate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
@@ -850,12 +960,50 @@ async def deactivate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bo
     rows = await database.get_gay_mode_applied_members(chat_id)
     if not confirm:
         return f"Gay mode restore check: affected={len(rows)}. Ask for confirmation first."
+    running_op = get_group_member_operation(chat_id)
+    if running_op is not None:
+        return f"Cannot start gaymode restore because {describe_group_member_operation(running_op)} is running for this group."
     if _has_running_gay_mode_job(chat_id):
         return "Gay mode backend is already running for this group. Wait for the final result."
-    task = asyncio.create_task(_run_deactivate_gay_mode_job(ctx.deps.client, chat_id, rows))
-    _GAY_MODE_JOBS[chat_id] = task
-    task.add_done_callback(lambda _: _GAY_MODE_JOBS.pop(chat_id, None))
-    return "Gay mode restore backend started. I will send the final result when it finishes."
+    operation = acquire_group_member_operation(chat_id, "gaymode_deactivate", ctx.deps.user_id)
+    if operation is None:
+        return "Another member operation is already running for this group."
+    job = GayModeJob(chat_id=chat_id, owner_id=ctx.deps.user_id, mode="deactivate", total=len(rows), skipped=0, operation=operation, started_at=monotonic())
+    task = asyncio.create_task(_run_deactivate_gay_mode_job(ctx.deps.client, job, rows))
+    job.task = task
+    _GAY_MODE_JOBS[chat_id] = job
+    task.add_done_callback(lambda done_task: _cleanup_gay_mode_job(chat_id, done_task))
+    return "Gay mode restore backend started. Progress and final result will be sent in private chat."
+
+
+@pyrogram.Client.on_callback_query(filters.regex(rf"^{_GAY_MODE_CALLBACK_PREFIX}\|"), group=0)
+async def gay_mode_progress_callback(client: pyrogram.Client, query: pyrogram.types.CallbackQuery):
+    if query.message is None or query.data is None or query.from_user is None:
+        return
+    _, action, chat_id_text = query.data.split("|", 2)
+    chat_id = int(chat_id_text)
+    job = _GAY_MODE_JOBS.get(chat_id)
+    if job is None:
+        await query.answer("Gaymode task không còn chạy.", show_alert=True)
+        return
+    if query.from_user.id != job.owner_id:
+        await query.answer("Nút này không dành cho bạn.", show_alert=True)
+        return
+    if action == "stop":
+        await query.answer()
+        await query.message.edit_text("<b>Dừng gaymode?</b>", reply_markup=_gay_mode_confirm_markup(chat_id))
+        return
+    if action == "cancel_stop":
+        await query.answer("Tiếp tục chạy.")
+        job.progress_message = query.message
+        await _edit_gay_mode_progress(job, "running", force=True)
+        return
+    if action == "confirm_stop":
+        job.stop_requested = True
+        await query.answer("Đang dừng...")
+        await query.message.edit_text(_gay_mode_progress_text(job, "stopping..."))
+        job.progress_message = query.message
+
 
 
 async def is_user_blocked(user_id: int) -> bool:
