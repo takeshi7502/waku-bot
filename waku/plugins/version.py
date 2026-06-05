@@ -155,9 +155,16 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
     heading_re = re.compile(r"^#+\s*(\d+)\.\s*(.+?)\s*$")
     table_re = re.compile(r"^\[([^\]]+)]\s*$")
     assign_re = re.compile(r"^([A-Za-z0-9_]+)\s*=\s*(.+)$")
+    lines = _settings_text().splitlines()
+    multiline_delimiter: str | None = None
 
-    for index, line in enumerate(_settings_text().splitlines()):
+    for index, line in enumerate(lines):
         stripped = line.strip()
+        if multiline_delimiter is not None:
+            if multiline_delimiter in stripped:
+                multiline_delimiter = None
+            continue
+
         heading = heading_re.match(stripped)
         if heading:
             number = int(heading.group(1))
@@ -181,11 +188,18 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
         if not match:
             continue
         key = match.group(1)
+        raw_value = match.group(2)
         full_key = f"{current_table}.{key}" if current_table else key
-        entry = ConfigEntry(key, full_key, _parse_scalar(match.group(2)), index, current_table)
+        entry = ConfigEntry(key, full_key, _parse_scalar(raw_value), index, current_table)
         entries[full_key] = entry
         if current is not None and not (current_table or "").startswith("agent_providers."):
             current.keys.append(full_key)
+
+        value_start = raw_value.lstrip()
+        for delimiter in ("'''", '"""'):
+            if value_start.startswith(delimiter) and value_start.count(delimiter) == 1:
+                multiline_delimiter = delimiter
+                break
 
     if providers:
         groups.append(ConfigGroup("providers", "agent_providers", [], None))

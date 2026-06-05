@@ -2,6 +2,10 @@ services:
   waku:
     build:
       context: .
+      args:
+        WAKU_VERSION: ${WAKU_VERSION:-local}
+        WAKU_COMMIT: ${WAKU_COMMIT:-unknown}
+        WAKU_BUILD_TIME: ${WAKU_BUILD_TIME:-unknown}
     image: waku-bot:local
     # Registry image fallback if local build is unavailable:
     # image: ghcr.io/takeshi7502/waku-bot:v2
