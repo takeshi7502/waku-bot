@@ -35,13 +35,6 @@ demo: [@jinwakubot](https://t.me/jinwakubot)
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/Tam97123">
-                    <img src="https://avatars.githubusercontent.com/u/219667310?v=4" width="100;" alt="Tam97123"/>
-                    <br />
-                    <sub><b>Tam97123</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/takeshi7502">
                     <img src="https://avatars.githubusercontent.com/u/107123061?v=4" width="100;" alt="takeshi7502"/>
                     <br />

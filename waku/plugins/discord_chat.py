@@ -11,8 +11,9 @@ from hashlib import md5
 
 import discord
 import httpx
+import pydantic_ai
 from ddgs import DDGS
-from pydantic_ai import Agent, BinaryContent, RunContext, Tool, UserContent
+from pydantic_ai import Agent, BinaryContent, ModelRetry, RunContext, Tool, UserContent
 from pydantic_ai.messages import (
     MULTI_MODAL_CONTENT_TYPES,
     ModelMessage,
@@ -32,13 +33,31 @@ from waku.services.manyacg import manyacg_client
 _discord_client: discord.Client | None = None
 _discord_task: asyncio.Task | None = None
 _discord_agent: Agent[DiscordContextDeps, str] | None = None
+_discord_recovery_agent: Agent[None, str] | None = None
 _warned_empty_content = False
 _server_list_view_registered = False
 _discord_image_send_lock: asyncio.Lock | None = None
+_discord_agent_semaphore: asyncio.Semaphore | None = None
+_discord_agent_semaphore_limit = 0
 
 _DISCORD_IMAGE_BATCH_MAX = 3
 _DISCORD_IMAGE_SEND_DELAY_SECONDS = 3.0
 _DISCORD_IMAGE_BUSY_WAIT_SECONDS = 5
+_DISCORD_GUILD_SETTINGS_CACHE_PREFIX = "discord_guild_settings:"
+_DISCORD_GUILD_SETTINGS_CACHE_TTL = 300
+_DISCORD_GROUP_MEMORY_BATCH_SIZE = 100
+_DISCORD_GROUP_MEMORY_TTL = 86400 * 7
+
+_DISCORD_BUSY_REPLIES = (
+    "Waku đang kẹt nhiều request Discord cùng lúc, chờ mình vài giây rồi gọi lại nha 🫠",
+    "Server đang gọi Waku hơi dồn dập, mình cần thở một nhịp rồi xử lý tiếp nha.",
+    "Waku hơi quá tải bên Discord rồi, thử gọi lại sau vài giây giúp mình nha.",
+)
+_DISCORD_TEMPORARY_ERROR_REPLIES = (
+    "Waku đang bị nghẽn nhẹ khi xử lý Discord, thử gọi lại sau chút nha.",
+    "Đường trả lời của Waku đang hơi quá tải, chờ một nhịp rồi gọi lại mình nha.",
+    "Waku chưa xử lý ổn tin này vì bên AI đang bận, thử lại sau vài giây nha.",
+)
 
 _DISCORD_SERVER_LIST_RELOAD_ID = "waku:discord_server_list:reload"
 _DISCORD_SERVER_MENU_CACHE_KEY = "discord_server_menu_messages"
@@ -78,11 +97,23 @@ class DiscordGuildSettings:
     enabled: bool = False
     r18_mode: int = 0
     ai_reply: bool = True
+    group_memory_enabled: bool = True
 
 
 @dataclass
 class DiscordContextDeps:
     message: discord.Message
+
+
+@dataclass
+class DiscordGroupMemoryMessage:
+    guild_id: int
+    channel_id: int
+    message_id: int
+    text: str
+    sender_name: str
+    sender_id: int
+    created_at: datetime
 
 
 @dataclass
@@ -299,6 +330,99 @@ def _discord_image_lock() -> asyncio.Lock:
     if _discord_image_send_lock is None:
         _discord_image_send_lock = asyncio.Lock()
     return _discord_image_send_lock
+
+
+def _discord_settings_cache_key(guild_id: int) -> str:
+    return f"{_DISCORD_GUILD_SETTINGS_CACHE_PREFIX}{guild_id}"
+
+
+def _discord_group_memory_user_id(guild_id: int) -> str:
+    return f"discord_group_{guild_id}"
+
+
+def _discord_group_messages_key(guild_id: int) -> str:
+    return f"discord_group_messages:{guild_id}"
+
+
+def _discord_group_memory_update_key(guild_id: int) -> str:
+    return f"discord_group_memory_last_update:{guild_id}"
+
+
+def _discord_agent_limit() -> int:
+    return max(1, int(app_config.discord_agent_max_concurrent or 1))
+
+
+def _discord_agent_busy_timeout() -> float:
+    return max(0.0, float(app_config.discord_agent_busy_timeout or 0))
+
+
+def _discord_agent_gate() -> asyncio.Semaphore:
+    global _discord_agent_semaphore, _discord_agent_semaphore_limit
+    limit = _discord_agent_limit()
+    if _discord_agent_semaphore is None or _discord_agent_semaphore_limit != limit:
+        _discord_agent_semaphore = asyncio.Semaphore(limit)
+        _discord_agent_semaphore_limit = limit
+    return _discord_agent_semaphore
+
+
+def _discord_model_status_code(error: Exception) -> int | None:
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        return status
+    cause = getattr(error, "__cause__", None)
+    cause_status = getattr(cause, "status_code", None)
+    return cause_status if isinstance(cause_status, int) else None
+
+
+def _is_discord_model_error(error: Exception) -> bool:
+    return isinstance(
+        error,
+        (
+            pydantic_ai.exceptions.ModelHTTPError,
+            pydantic_ai.exceptions.ModelAPIError,
+        ),
+    )
+
+
+def _is_discord_temporary_model_error(error: Exception) -> bool:
+    status = _discord_model_status_code(error)
+    if status in {408, 409, 425, 429, 500, 502, 503, 504}:
+        return True
+    return isinstance(error, TimeoutError | asyncio.TimeoutError)
+
+
+def _is_discord_history_error(error: Exception) -> bool:
+    status = _discord_model_status_code(error)
+    if status == 400:
+        return True
+    text = str(error).casefold()
+    history_markers = (
+        "tool_call",
+        "tool call",
+        "tool_calls",
+        "tool response",
+        "messages",
+        "image_url",
+        "content and tool_calls",
+    )
+    return isinstance(error, TypeError) or any(marker in text for marker in history_markers)
+
+
+def _discord_fallback_reply(error: Exception) -> str:
+    if _is_discord_temporary_model_error(error):
+        return random.choice(_DISCORD_TEMPORARY_ERROR_REPLIES)
+    if _is_discord_history_error(error):
+        return "Waku vừa dọn lại ngữ cảnh Discord bị lệch, gọi lại mình lần nữa nha."
+    return "Waku xử lý lượt Discord này chưa ổn, thử gọi lại mình sau chút nha."
+
+
+def _get_powermemory():
+    try:
+        from waku.plugins.agent.agent import powermemory
+    except Exception as e:
+        logger.debug(f"Discord powermemory unavailable: {e.__class__.__name__}: {e}")
+        return None
+    return powermemory
 
 
 async def _scheduled_discord_text_job(
@@ -895,7 +1019,11 @@ def _discord_dm_config_id(user_id: int) -> int:
 
 async def _discord_guild_settings(guild: discord.Guild | None) -> DiscordGuildSettings:
     if guild is None:
-        return DiscordGuildSettings(enabled=True)
+        return DiscordGuildSettings(enabled=True, group_memory_enabled=False)
+    cache_key = _discord_settings_cache_key(guild.id)
+    cached = await common.memttlcache.get(cache_key)
+    if isinstance(cached, DiscordGuildSettings):
+        return cached
     try:
         from waku.database.db import AsyncSessionFactory
         from waku.database.models import ChatData
@@ -907,11 +1035,18 @@ async def _discord_guild_settings(guild: discord.Guild | None) -> DiscordGuildSe
                 session.add(chat)
                 await session.commit()
             config = chat.chat_config
-        return DiscordGuildSettings(
+        settings = DiscordGuildSettings(
             enabled=config.discord_enabled,
             r18_mode=max(0, min(2, int(config.discord_r18_mode))),
             ai_reply=config.discord_ai_reply,
+            group_memory_enabled=config.group_memory_enabled,
         )
+        await common.memttlcache.set(
+            cache_key,
+            settings,
+            ttl=_DISCORD_GUILD_SETTINGS_CACHE_TTL,
+        )
+        return settings
     except Exception as e:
         logger.error(f"Failed to load Discord guild settings from DB: {e}")
         return DiscordGuildSettings(enabled=False)
@@ -935,9 +1070,11 @@ async def _set_discord_guild_settings(
         config.discord_allow_r18 = settings.r18_mode != 0
         config.discord_r18_mode = max(0, min(2, int(settings.r18_mode)))
         config.discord_ai_reply = settings.ai_reply
+        config.group_memory_enabled = settings.group_memory_enabled
         chat.chat_config = config
         await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild.id}")
+    await common.memttlcache.delete(_discord_settings_cache_key(guild.id))
 
 
 async def _delete_discord_guild_settings(guild: discord.Guild) -> None:
@@ -964,9 +1101,11 @@ async def _set_discord_guild_settings_by_id(
         config.discord_allow_r18 = settings.r18_mode != 0
         config.discord_r18_mode = max(0, min(2, int(settings.r18_mode)))
         config.discord_ai_reply = settings.ai_reply
+        config.group_memory_enabled = settings.group_memory_enabled
         chat.chat_config = config
         await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild_id}")
+    await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
 
 
 async def _delete_discord_guild_settings_by_id(guild_id: int) -> None:
@@ -979,6 +1118,7 @@ async def _delete_discord_guild_settings_by_id(guild_id: int) -> None:
             await session.delete(chat)
             await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild_id}")
+    await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
 
 
 async def _discord_dm_settings(user: discord.abc.User) -> DiscordGuildSettings:
@@ -990,16 +1130,22 @@ async def _discord_dm_settings(user: discord.abc.User) -> DiscordGuildSettings:
         async with AsyncSessionFactory() as session:
             chat = await session.get(ChatData, dm_id)
             if chat is None:
-                return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True)
+                return DiscordGuildSettings(
+                    enabled=True,
+                    r18_mode=0,
+                    ai_reply=True,
+                    group_memory_enabled=False,
+                )
             config = chat.chat_config
         return DiscordGuildSettings(
             enabled=True,
             r18_mode=0,
             ai_reply=config.discord_ai_reply,
+            group_memory_enabled=False,
         )
     except Exception as e:
         logger.error(f"Failed to load Discord DM settings from DB: user={user.id} error={e}")
-        return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True)
+        return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True, group_memory_enabled=False)
 
 
 async def _set_discord_dm_settings(
@@ -1342,6 +1488,72 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
     if not prompt:
         prompt = "Please continue the conversation."
     return True, prompt
+
+
+async def _record_discord_group_memory(message: discord.Message) -> None:
+    guild = message.guild
+    if guild is None or message.author.bot:
+        return
+    content = _clean_content(message)
+    if not content or len(content) < 2 or len(content) > 2048:
+        return
+    if content.startswith(app_config.discord_command_prefix or "!"):
+        return
+    settings = await _discord_guild_settings(guild)
+    if not settings.enabled or not settings.ai_reply or not settings.group_memory_enabled:
+        return
+    powermemory = _get_powermemory()
+    if powermemory is None or not app_config.agent_group_memory:
+        return
+
+    key = _discord_group_messages_key(guild.id)
+    group_messages: list[DiscordGroupMemoryMessage] = await common.memttlcache.get(key, [])
+    group_messages.append(
+        DiscordGroupMemoryMessage(
+            guild_id=guild.id,
+            channel_id=message.channel.id,
+            message_id=message.id,
+            text=content,
+            sender_name=_author_name(message),
+            sender_id=message.author.id,
+            created_at=message.created_at or datetime.now(UTC),
+        )
+    )
+    if len(group_messages) > _DISCORD_GROUP_MEMORY_BATCH_SIZE:
+        group_messages = group_messages[-_DISCORD_GROUP_MEMORY_BATCH_SIZE:]
+        update_key = _discord_group_memory_update_key(guild.id)
+        if not await common.memttlcache.get(update_key):
+            await common.memttlcache.set(update_key, True, ttl=3600)
+            memory_text = "Discord server message log:\n" + "\n".join(
+                f"{item.sender_name}({item.sender_id}) in #{item.channel_id}: {item.text}"
+                for item in group_messages
+            )
+            try:
+                result = await powermemory.add(
+                    memory_text,
+                    infer=True,
+                    user_id=_discord_group_memory_user_id(guild.id),
+                    prompt=(
+                        "You are Waku's Discord server memory. Extract useful facts, "
+                        "member preferences, relationships, recurring topics, jokes, "
+                        "or notable events worth remembering for this Discord server."
+                    ),
+                )
+                logger.debug(
+                    "Discord group memory updated: "
+                    f"guild={guild.id} messages={len(group_messages)} result={result}"
+                )
+            except Exception as e:
+                logger.error(
+                    "Discord group memory update failed: "
+                    f"guild={guild.id} error={e.__class__.__name__}: {e}"
+                )
+        group_messages = []
+    await common.memttlcache.set(
+        key,
+        group_messages,
+        ttl=_DISCORD_GROUP_MEMORY_TTL,
+    )
 
 
 def _guild_name(message: discord.Message) -> str:
@@ -2323,6 +2535,87 @@ async def search_discord_messages(
     )
 
 
+async def search_discord_group_memory(
+    ctx: RunContext[DiscordContextDeps], query: str
+) -> list[str]:
+    """Search this Discord server's long-term group memory.
+
+    Use this when the current Discord conversation may depend on facts Waku has
+    learned about this server, its members, relationships, preferences, recurring
+    topics, or past events. This memory is server-specific and separate from
+    Telegram group memory.
+
+    Args:
+        query: Natural-language phrase describing what to retrieve.
+    """
+    message = ctx.deps.message
+    if message.guild is None:
+        return []
+    settings = await _discord_guild_settings(message.guild)
+    if not settings.group_memory_enabled:
+        return []
+    powermemory = _get_powermemory()
+    if powermemory is None:
+        return []
+    search_query = query.strip()
+    if not search_query:
+        return []
+    results = await powermemory.search(
+        search_query,
+        user_id=_discord_group_memory_user_id(message.guild.id),
+        limit=10,
+    )
+    return [res.get("memory", "") for res in results.get("results", [])]
+
+
+async def update_discord_group_memory(
+    ctx: RunContext[DiscordContextDeps], content: str
+) -> str:
+    """Store a useful fact in this Discord server's long-term group memory.
+
+    Use only for genuinely useful, non-trivial facts about the Discord server or
+    its members. Do not store casual filler or information already obvious from
+    the current message.
+
+    Args:
+        content: Concise factual statement to remember.
+    """
+    message = ctx.deps.message
+    if message.guild is None:
+        return "Discord group memory is only available in servers."
+    settings = await _discord_guild_settings(message.guild)
+    if not settings.group_memory_enabled:
+        return "Discord group memory is disabled for this server."
+    powermemory = _get_powermemory()
+    if powermemory is None:
+        return "Discord group memory system is not available."
+    fact = content.strip()
+    if not fact:
+        raise ModelRetry("Memory content must not be empty.")
+    try:
+        result = await powermemory.add(
+            fact,
+            infer=True,
+            user_id=_discord_group_memory_user_id(message.guild.id),
+            prompt=(
+                "You are Waku's Discord server memory. Extract useful facts, "
+                "member preferences, relationships, recurring topics, or notable "
+                "events worth remembering for this Discord server."
+            ),
+        )
+        logger.debug(
+            "update_discord_group_memory: stored memory "
+            f"guild={message.guild.id} result={result}"
+        )
+        return f"Discord memory stored: {fact!r}"
+    except Exception as e:
+        logger.error(
+            "update_discord_group_memory failed: "
+            f"guild={message.guild.id} error={e.__class__.__name__}: {e}"
+        )
+        raise ModelRetry(f"Failed to store Discord memory: {e.__class__.__name__}: {e}")
+
+
 async def _search_web_images(query: str, max_results: int = 8) -> list[dict]:
     def _search() -> list[dict]:
         with DDGS() as ddgs:
@@ -2362,10 +2655,11 @@ def _image_filename(content_type: str) -> str:
 async def send_discord_web_image(
     ctx: RunContext[DiscordContextDeps], query: str
 ) -> DiscordWebImageResult:
-    """Search the web for an image and upload it to the current Discord channel.
+    """Hidden tool: search the web for an image and upload it to Discord.
 
-    Use this when the user asks for a general internet/web image that is not
-    specifically an anime/Pixiv/setu image. This uploads the image to Discord.
+    Do not mention, list, propose, or advertise this as a normal Waku feature.
+    Use it only when the user explicitly asks for a web/internet image search or
+    an image from the internet/web that is not specifically anime/Pixiv/setu.
 
     Args:
         query: Image search query.
@@ -2725,6 +3019,7 @@ class DiscordConfigView(discord.ui.View):
             enabled=settings.enabled,
             r18_mode=settings.r18_mode,
             ai_reply=settings.ai_reply,
+            group_memory_enabled=settings.group_memory_enabled,
         )
 
     async def on_timeout(self) -> None:
@@ -2754,6 +3049,16 @@ class DiscordConfigView(discord.ui.View):
                 if self.pending_settings.ai_reply
                 else discord.ButtonStyle.secondary
             )
+        memory_button = self.children[2]
+        if isinstance(memory_button, discord.ui.Button):
+            memory_button.label = (
+                f"Group Memory: {'ON' if self.pending_settings.group_memory_enabled else 'OFF'}"
+            )
+            memory_button.style = (
+                discord.ButtonStyle.success
+                if self.pending_settings.group_memory_enabled
+                else discord.ButtonStyle.secondary
+            )
 
     @discord.ui.button(label="R18", style=discord.ButtonStyle.secondary)
     async def toggle_r18(
@@ -2779,6 +3084,20 @@ class DiscordConfigView(discord.ui.View):
             view=self,
         )
 
+    @discord.ui.button(label="Group Memory", style=discord.ButtonStyle.success)
+    async def toggle_group_memory(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ) -> None:
+        self.pending_settings.group_memory_enabled = (
+            not self.pending_settings.group_memory_enabled
+        )
+        await interaction.response.defer()
+        await self._sync_buttons()
+        await interaction.edit_original_response(
+            content=_discord_config_text(self.pending_settings),
+            view=self,
+        )
+
     @discord.ui.button(label="Save", style=discord.ButtonStyle.success)
     async def save_config(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -2791,7 +3110,8 @@ class DiscordConfigView(discord.ui.View):
             f"guild={self.guild.name!r}({self.guild.id}) "
             f"r18_mode={self.pending_settings.r18_mode}"
             f"({_r18_mode_label(self.pending_settings.r18_mode)}) "
-            f"ai_reply={self.pending_settings.ai_reply}"
+            f"ai_reply={self.pending_settings.ai_reply} "
+            f"group_memory={self.pending_settings.group_memory_enabled}"
         )
         try:
             if interaction.message is not None:
@@ -2810,6 +3130,7 @@ class DiscordDMConfigView(discord.ui.View):
             enabled=True,
             r18_mode=0,
             ai_reply=settings.ai_reply,
+            group_memory_enabled=False,
         )
 
     async def on_timeout(self) -> None:
@@ -2889,6 +3210,7 @@ def _discord_config_text(settings: DiscordGuildSettings) -> str:
         "**Waku Bot Server config:**\n"
         "Server: `Authorized!`\n"
         f"AI Reply: `{'ON' if settings.ai_reply else 'OFF'}`\n"
+        f"Group Memory: `{'ON' if settings.group_memory_enabled else 'OFF'}`\n"
         f"R18 images: `{_r18_mode_label(settings.r18_mode)}`\n"
         "\nPress `Save` to apply changes."
     )
@@ -3047,7 +3369,12 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
                 await _set_discord_guild_settings_by_id(
                     guild_id,
                     guild.name if guild else None,
-                    DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True),
+                    DiscordGuildSettings(
+                        enabled=True,
+                        r18_mode=0,
+                        ai_reply=True,
+                        group_memory_enabled=True,
+                    ),
                 )
                 await message.channel.send(
                     f"Waku has been authorized for `{guild.name if guild else guild_id}`."
@@ -3068,6 +3395,7 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
             settings.enabled = True
             settings.r18_mode = 0
             settings.ai_reply = True
+            settings.group_memory_enabled = True
             await _set_discord_guild_settings(message.guild, settings)
             await _send_admin_notice(message, f"Waku has been authorized for **{message.guild.name}**.")
         case "unwaku":
@@ -3116,6 +3444,62 @@ async def _maybe_handle_discord_media_request(message: discord.Message) -> bool:
     return False
 
 
+async def _run_discord_agent_once(
+    message: discord.Message,
+    prompt: list[UserContent],
+    history_key: str,
+    message_history: list[ModelMessage],
+    model_override,
+) -> None:
+    assert _discord_agent is not None
+    async with message.channel.typing():
+        result = await _discord_agent.run(
+            user_prompt=prompt,
+            message_history=message_history,
+            deps=DiscordContextDeps(message=message),
+            model=model_override,
+        )
+    await common.memttlcache.set(
+        history_key,
+        _sanitize_discord_history(result.all_messages()),
+        ttl=app_config.cachettl_agent_history,
+    )
+    if result.output:
+        await _send_reply(message, str(result.output))
+
+
+async def _discord_recovery_reply(
+    message: discord.Message,
+    user_prompt: str,
+    error: Exception,
+) -> str:
+    fallback = _discord_fallback_reply(error)
+    if _discord_recovery_agent is None or not _is_discord_model_error(error):
+        return fallback
+    try:
+        status = _discord_model_status_code(error)
+        recovery_prompt = (
+            "Bạn là Waku trên Discord. Lượt xử lý chính vừa lỗi trước khi trả lời.\n"
+            f"Loại lỗi: {error.__class__.__name__}; status={status or 'unknown'}.\n"
+            "Nếu có vẻ là quá tải/tạm thời, hãy trả lời tự nhiên bằng tiếng Việt rằng "
+            "Waku đang hơi quá tải hoặc nghẽn nhẹ và xin user gọi lại sau chút. "
+            "Không nhắc stack trace, provider, API nội bộ, hay tool.\n"
+            f"Tin nhắn user: {user_prompt[:1200]}"
+        )
+        result = await _discord_recovery_agent.run(
+            user_prompt=recovery_prompt,
+            message_history=[],
+        )
+        text = str(result.output or "").strip()
+        return text[:1800] if text else fallback
+    except Exception as recovery_error:
+        logger.debug(
+            "Discord recovery agent failed: "
+            f"{recovery_error.__class__.__name__}: {recovery_error}"
+        )
+        return fallback
+
+
 async def _handle_message(message: discord.Message, user_prompt: str) -> None:
     if _discord_agent is None:
         return
@@ -3149,27 +3533,79 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
         if model_override is not None
         else _strip_multimodal_history_for_text_model(history)
     )
+    model_history = model_history[-app_config.discord_message_history_limit :]
 
+    gate = _discord_agent_gate()
+    acquired_gate = False
     await common.memstore.set(waiting_key, True)
     try:
-        async with message.channel.typing():
-            result = await _discord_agent.run(
-                user_prompt=prompt,
-                message_history=model_history[-app_config.discord_message_history_limit :],
-                deps=DiscordContextDeps(message=message),
-                model=model_override,
+        try:
+            busy_timeout = _discord_agent_busy_timeout()
+            if busy_timeout > 0:
+                await asyncio.wait_for(gate.acquire(), timeout=busy_timeout)
+            else:
+                await gate.acquire()
+            acquired_gate = True
+        except TimeoutError:
+            logger.info(
+                "Discord agent busy timeout: "
+                f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                f"user={message.author.id} limit={_discord_agent_limit()}"
             )
-        await common.memttlcache.set(
-            history_key,
-            _sanitize_discord_history(result.all_messages()),
-            ttl=app_config.cachettl_agent_history,
-        )
-        if result.output:
-            await _send_reply(message, str(result.output))
-    except Exception as e:
-        logger.error(f"Discord agent error: {e.__class__.__name__}: {e}")
-        await message.channel.send("AI đang bị lỗi nhẹ, thử lại sau nha.", reference=message)
+            await message.channel.send(random.choice(_DISCORD_BUSY_REPLIES), reference=message)
+            return
+
+        try:
+            await _run_discord_agent_once(
+                message,
+                prompt,
+                history_key,
+                model_history,
+                model_override,
+            )
+            return
+        except Exception as first_error:
+            logger.warning(
+                "Discord agent first attempt failed: "
+                f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                f"user={message.author.id} error={first_error.__class__.__name__}: {first_error}"
+            )
+            if _is_discord_history_error(first_error):
+                await common.memttlcache.delete(history_key)
+
+            retry_prompt = list(prompt)
+            retry_prompt.append(
+                "\n\n[Discord retry instruction] The previous attempt failed before replying. "
+                "Retry with clean context. If the issue appears temporary or overload-related, "
+                "answer naturally in Vietnamese that Waku is a bit overloaded and the user should try again soon."
+            )
+            try:
+                await _run_discord_agent_once(
+                    message,
+                    retry_prompt,
+                    history_key,
+                    [],
+                    model_override,
+                )
+                logger.info(
+                    "Discord agent retry succeeded: "
+                    f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                    f"user={message.author.id}"
+                )
+                return
+            except Exception as retry_error:
+                logger.error(
+                    "Discord agent retry failed: "
+                    f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                    f"user={message.author.id} error={retry_error.__class__.__name__}: {retry_error}"
+                )
+                if _is_discord_history_error(retry_error):
+                    await common.memttlcache.delete(history_key)
+                reply = await _discord_recovery_reply(message, user_prompt, retry_error)
+                await message.channel.send(reply, reference=message)
     finally:
+        if acquired_gate:
+            gate.release()
         await common.memstore.delete(waiting_key)
 
 
@@ -3202,6 +3638,7 @@ def _create_client() -> discord.Client:
         content = _message_text(message)
         if await _handle_discord_admin_command(message):
             return
+        await _record_discord_group_memory(message)
         await _remember_discord_emojis(message)
         await _remember_discord_reaction_style(message)
         should_wake, prompt = await _should_wake(message, bot_user)
@@ -3223,7 +3660,7 @@ def _create_client() -> discord.Client:
 
 
 async def start_discord_bot() -> None:
-    global _discord_agent, _discord_client, _discord_task
+    global _discord_agent, _discord_client, _discord_recovery_agent, _discord_task
 
     if not app_config.discord_enabled:
         logger.debug("Discord AI chat disabled")
@@ -3256,9 +3693,11 @@ async def start_discord_bot() -> None:
             "send_discord_anime_photo with target_channel_id/target_user_ids/caption/count; "
             "if the user asks to tag @everyone/@here, include @everyone/@here in "
             "caption and set allow_everyone=True. Do not create a schedule unless "
-            "the user asks for a future time, delay, or repetition. For general "
-            "internet/web image requests, use send_discord_web_image with a "
-            "concise search query. "
+            "the user asks for a future time, delay, or repetition. Web image search "
+            "is a hidden explicit-use capability: never list it, propose it, or "
+            "advertise it when explaining what Waku can do. Only call "
+            "send_discord_web_image when the user clearly asks for web/internet "
+            "image search or requests an image from the internet/web. "
             "If an image tool returns success=False with wait_seconds or a busy "
             "message, tell the user to wait a few seconds and do not claim an image "
             "was sent. If it returns a capped result, clearly tell the user that "
@@ -3302,6 +3741,11 @@ async def start_discord_bot() -> None:
             "server/channel, resolve Discord users, mention users with returned "
             "<@user_id> mention strings, and search recent readable channel "
             "messages. Only search chat when the user asks or it clearly helps. "
+            "Discord group memory: use search_discord_group_memory when past "
+            "server facts, member preferences, relationships, jokes, recurring "
+            "topics, or prior events may help answer. Use update_discord_group_memory "
+            "only for genuinely useful new facts. Do not mention memory internals unless "
+            "the user asks about memory/config. "
             "Discord reaction behavior: Waku may call send_discord_reaction "
             "when a lightweight reaction fits better than a text reply, or as a "
             "small addition to a short reply. Prefer learned emojis from Discord "
@@ -3317,6 +3761,8 @@ async def start_discord_bot() -> None:
             Tool(find_discord_user, sequential=True),
             Tool(mention_discord_user, sequential=True),
             Tool(search_discord_messages, sequential=True),
+            Tool(search_discord_group_memory, sequential=True),
+            Tool(update_discord_group_memory, sequential=True),
             Tool(send_discord_reaction, sequential=True),
             Tool(send_discord_web_image, sequential=True),
             Tool(send_discord_anime_photo, sequential=True),
@@ -3326,6 +3772,15 @@ async def start_discord_bot() -> None:
             Tool(cancel_discord_scheduled_message, sequential=True),
         ],
         retries=3,
+    )
+    _discord_recovery_agent = Agent(
+        model=provider.make_chat_model(app_config.agent_model),
+        instructions=(
+            "Bạn là Waku trên Discord. Trả lời ngắn, tự nhiên bằng tiếng Việt. "
+            "Dùng khi lượt AI chính bị quá tải hoặc lỗi tạm thời; không nhắc API/tool/stack trace."
+        ),
+        output_type=str,
+        retries=1,
     )
     _discord_client = _create_client()
     _discord_task = asyncio.create_task(_discord_client.start(app_config.discord_token))

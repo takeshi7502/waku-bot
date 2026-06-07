@@ -57,6 +57,8 @@ class _AppConfig(pydantic.BaseModel):
     discord_reply_max_messages: int = 7
     discord_reply_delay_min: float = 0.7
     discord_reply_delay_max: float = 3.0
+    discord_agent_max_concurrent: int = 2
+    discord_agent_busy_timeout: float = 20.0
 
     # external services
     redis: bool = False
