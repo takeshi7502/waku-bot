@@ -190,3 +190,19 @@ async def prepare_code_awareness_tools(
     if app_config.agent_code_awareness:
         return tool_def
     return None
+
+
+async def prepare_shell_tools(
+    ctx: RunContext[datatype.ContextDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    """Show shell agent tools only when enabled AND user is bot owner.
+
+    Double-gated:
+    1. agent_shell_enabled must be True in config
+    2. The requesting user must be in app_config.owners
+    """
+    if not getattr(app_config, "agent_shell_enabled", False):
+        return None
+    if ctx.deps.user_id not in app_config.owners:
+        return None
+    return tool_def
