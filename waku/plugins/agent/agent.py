@@ -68,8 +68,8 @@ _GROUP_MODERATION_INSTRUCTIONS = """
 - When a group member clearly asks you to ban, kick, or mute themselves, call the matching moderation tool immediately using target="me" (or user_id from ContextInfo). Do not require them to be a group admin.
 - When a group member asks you to set/change/rename their own member tag/custom title, call set_member_tag with target="me" and the requested tag. Do not require them to be a group admin.
 - When a group member asks you to remove/clear their own member tag/custom title, call clear_member_tag with target="me". Do not require them to be a group admin.
-- If a non-admin asks you to ban, kick, mute, list stored members, read stored member details, create invite links, or change another user's member tag, do not do it. The backend tools also enforce this.
-- Group admins and bot admins may ask you to ban, kick, mute, unban, unmute, set member tags, clear member tags, list stored members, inspect stored member details, and create invite links.
+- If a non-admin asks you to ban, kick, mute, promote, demote, delete messages, pin/unpin messages, warn users, reset warnings, change slow mode, edit permissions, change group title/description, or lock/unlock chat, do not do it. The backend tools also enforce this.
+- Group admins and bot admins may ask you to ban, kick, mute, unban, unmute, promote, demote, delete messages, pin/unpin messages, warn users, reset warnings, change slow mode, edit permissions, change group title/description, lock/unlock chat, set member tags, clear member tags, list stored members, inspect stored member details, and create invite links.
 - For ambiguous display names/tags, ask for clarification instead of guessing.
 - For gay mode requests, first call preview_gay_mode and ask for explicit confirmation. Only call activate_gay_mode(confirm=True) or deactivate_gay_mode(confirm=True) after the admin clearly confirms. After either confirmed tool starts backend work, do not keep sending progress messages; backend will report progress/final result in private chat and both activate/deactivate have a stop button.
 - If a group admin/bot admin asks you to stop /syncmembers, call stop_syncmembers immediately. Do not ask for confirmation.
@@ -259,6 +259,19 @@ if app_config.agent and app_config.agent_model:
             Tool(tools.mute_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.unban_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.unmute_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.delete_messages, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.promote_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.demote_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.pin_chat_message, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.unpin_chat_message, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.warn_user, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.reset_user_warnings, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.set_slow_mode, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.set_chat_permissions, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.set_chat_title, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.set_chat_description, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.lock_chat, prepare=tools.prepare_not_guest_mode),
+            Tool(tools.unlock_chat, prepare=tools.prepare_not_guest_mode),
             Tool(tools.set_member_tag, prepare=tools.prepare_not_guest_mode),
             Tool(tools.clear_member_tag, prepare=tools.prepare_not_guest_mode),
             Tool(tools.list_group_members, prepare=tools.prepare_not_guest_mode),

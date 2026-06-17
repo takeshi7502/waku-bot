@@ -60,6 +60,7 @@ class ChatConfig:
     agent_group_manage_enabled: bool = True
     agent_ban_users_enabled: bool = False
     agent_mute_users_enabled: bool = False
+    agent_automod_enabled: bool = False
     setu_enabled: bool = True
     convert_b23_enabled: bool = True
     parse_artwork_enabled: bool = True
@@ -99,6 +100,7 @@ class ChatConfig:
             ),
             agent_ban_users_enabled=data.get("agent_ban_users_enabled", False),
             agent_mute_users_enabled=data.get("agent_mute_users_enabled", False),
+            agent_automod_enabled=data.get("agent_automod_enabled", False),
             group_memory_enabled=data.get("group_memory_enabled", True),
             discord_enabled=data.get("discord_enabled", False),
             discord_muted=data.get("discord_muted", False),

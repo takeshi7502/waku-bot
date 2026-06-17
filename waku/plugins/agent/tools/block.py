@@ -1006,6 +1006,503 @@ async def gay_mode_progress_callback(client: pyrogram.Client, query: pyrogram.ty
 
 
 
+async def delete_messages(
+    ctx: RunContext[datatype.ContextDeps],
+    message_ids: list[int] | int | None = None,
+    target: str = "",
+    count: int = 1,
+) -> str:
+    """Delete messages in the current group.
+
+    Args:
+        message_ids: Specific message ID or list of message IDs to delete.
+        target: Optional @username, tg://user link, numeric ID, display name, or "me" to delete messages from. If omitted and reply message exists, deletes the replied message.
+        count: Number of recent messages to delete when target is specified or when deleting general recent messages (default 1).
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "delete messages"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    to_delete: list[int] = []
+
+    # Case 1: Specific message IDs provided
+    if message_ids is not None:
+        if isinstance(message_ids, int):
+            to_delete.append(message_ids)
+        elif isinstance(message_ids, list):
+            to_delete.extend(message_ids)
+
+    # Case 2: Reply message exists and no target/ids are specified
+    elif not target and ctx.deps.message.reply_to_message:
+        to_delete.append(ctx.deps.message.reply_to_message.id)
+
+    # Case 3: Target specified - delete recent messages from a target user
+    elif target:
+        target_user_id, refusal = await _resolve_moderation_target(ctx, None, target)
+        if refusal or target_user_id is None:
+            return refusal or "Could not resolve target user for deleting messages."
+
+        # Fetch recent messages and filter by sender
+        limit = max(1, min(100, count * 5))
+        async for msg in client.get_chat_history(chat_id, limit=limit):
+            if msg.from_user and msg.from_user.id == target_user_id:
+                to_delete.append(msg.id)
+            if len(to_delete) >= count:
+                break
+    # Case 4: No message_ids, target or reply - delete N recent messages in general
+    else:
+        async for msg in client.get_chat_history(chat_id, limit=count + 1):
+            if msg.id != ctx.deps.message.id:
+                to_delete.append(msg.id)
+            if len(to_delete) >= count:
+                break
+
+    if not to_delete:
+        return "No messages found to delete."
+
+    try:
+        await client.delete_messages(chat_id, to_delete)
+        # Also attempt to delete the command message itself to clean up
+        try:
+            await client.delete_messages(chat_id, ctx.deps.message.id)
+        except RPCError:
+            pass
+        return f"Successfully deleted {len(to_delete)} messages."
+    except RPCError as e:
+        logger.warning(f"Failed to delete messages in chat {chat_id}: {e}")
+        return f"Failed to delete messages: {e.__class__.__name__}. The bot may lack delete permissions."
+
+
+async def promote_user(
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int | None = None,
+    target: str = "",
+    title: str = "",
+    reason: str = "",
+) -> str:
+    """Promote a group member to administrator.
+
+    Args:
+        user_id: Telegram user ID when known.
+        target: Optional @username, tg://user link, numeric ID, display name, or reply target.
+        title: Custom administrator title (custom tag/role). Max 16 characters.
+        reason: Brief reason for promoting this user.
+    """
+    user_id, _, refusal = await _resolve_checked_target_member(ctx, user_id, target, "promote")
+    if refusal or user_id is None:
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+    
+    try:
+        await client.promote_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            privileges=pyrogram.types.ChatAdministratorRights(
+                can_manage_chat=True,
+                can_change_info=True,
+                can_delete_messages=True,
+                can_restrict_members=True,
+                can_invite_users=True,
+                can_pin_messages=True,
+                can_manage_video_chats=True,
+                can_manage_topics=True,
+            ),
+        )
+        if title:
+            # Clean/validate title
+            title = title.strip()[:16]
+            try:
+                await client.set_administrator_title(chat_id, user_id, title)
+            except RPCError as e:
+                logger.warning(f"Failed to set admin title for user {user_id}: {e}")
+    except RPCError as e:
+        logger.warning(
+            f"Failed to promote user {user_id} in chat {chat_id}: {e.__class__.__name__}: {e}"
+        )
+        return f"Failed to promote user {user_id}: {e.__class__.__name__}. The bot may lack promote permissions."
+
+    logger.warning(
+        f"Agent promoted user {user_id} in chat {chat_id}; requested by {ctx.deps.user_id}; reason: {reason!r}"
+    )
+    return f"User {user_id} has been promoted to administrator."
+
+
+async def demote_user(
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int | None = None,
+    target: str = "",
+    reason: str = "",
+) -> str:
+    """Demote a group administrator back to a regular member.
+
+    Args:
+        user_id: Telegram user ID when known.
+        target: Optional @username, tg://user link, numeric ID, display name, or reply target.
+        reason: Brief reason for demoting this user.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "demote"):
+        return refusal
+
+    user_id, refusal = await _resolve_moderation_target(ctx, user_id, target)
+    if refusal or user_id is None:
+        return refusal or "Cannot resolve target user. Reply to their message, mention @username, or provide user ID."
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+    me = await client.get_me()
+
+    if user_id == me.id:
+        return "Refusing to demote myself."
+    if user_id == ctx.deps.user_id:
+        return "Refusing to demote the user currently talking to me."
+
+    try:
+        member = await common.get_chat_member(client, chat_id, user_id)
+    except Exception as e:
+        logger.warning(f"Failed to check member {user_id} before demote: {e}")
+        return f"Cannot verify target membership: {e.__class__.__name__}."
+
+    if member.status == ChatMemberStatus.OWNER:
+        return "Refusing to demote the group owner."
+    if member.status != ChatMemberStatus.ADMINISTRATOR:
+        return "User is not an administrator of this group."
+    if await _is_protected_bot_admin_or_owner(user_id, chat_id):
+        return "Cannot demote bot admin or owner."
+
+    try:
+        await client.promote_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            privileges=pyrogram.types.ChatAdministratorRights(
+                can_manage_chat=False,
+                can_change_info=False,
+                can_delete_messages=False,
+                can_restrict_members=False,
+                can_invite_users=False,
+                can_pin_messages=False,
+                can_manage_video_chats=False,
+                can_manage_topics=False,
+            ),
+        )
+    except RPCError as e:
+        logger.warning(
+            f"Failed to demote user {user_id} in chat {chat_id}: {e.__class__.__name__}: {e}"
+        )
+        return f"Failed to demote user {user_id}: {e.__class__.__name__}. The bot may lack promote/demote permissions."
+
+    logger.warning(
+        f"Agent demoted user {user_id} in chat {chat_id}; requested by {ctx.deps.user_id}; reason: {reason!r}"
+    )
+    return f"User {user_id} has been demoted to a regular member."
+
+
+async def pin_chat_message(
+    ctx: RunContext[datatype.ContextDeps],
+    message_id: int | None = None,
+    disable_notification: bool = False,
+) -> str:
+    """Pin a message in the current group.
+
+    Args:
+        message_id: Specific message ID to pin. If omitted and replying to a message, pins the replied message.
+        disable_notification: If True, pins the message silently without notifying group members.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "pin message"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    if message_id is None and ctx.deps.message.reply_to_message:
+        message_id = ctx.deps.message.reply_to_message.id
+
+    if message_id is None:
+        return "Please specify message_id or reply to a message to pin."
+
+    try:
+        await client.pin_chat_message(
+            chat_id=chat_id,
+            message_id=message_id,
+            disable_notification=disable_notification,
+        )
+        return f"Successfully pinned message {message_id}."
+    except RPCError as e:
+        logger.warning(f"Failed to pin message {message_id} in {chat_id}: {e}")
+        return f"Failed to pin message: {e.__class__.__name__}. The bot may lack pin permissions."
+
+
+async def unpin_chat_message(
+    ctx: RunContext[datatype.ContextDeps],
+    message_id: int | None = None,
+) -> str:
+    """Unpin a message in the current group.
+
+    Args:
+        message_id: Specific message ID to unpin. If omitted, unpins the replied message. If there is no replied message, unpins the most recently pinned message.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "unpin message"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    if message_id is None and ctx.deps.message.reply_to_message:
+        message_id = ctx.deps.message.reply_to_message.id
+
+    try:
+        if message_id is not None:
+            await client.unpin_chat_message(chat_id=chat_id, message_id=message_id)
+            return f"Successfully unpinned message {message_id}."
+        else:
+            await client.unpin_chat_message(chat_id=chat_id)
+            return "Successfully unpinned the pinned message."
+    except RPCError as e:
+        logger.warning(f"Failed to unpin message in {chat_id}: {e}")
+        return f"Failed to unpin message: {e.__class__.__name__}. The bot may lack pin permissions."
+
+
+async def warn_user(
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int | None = None,
+    target: str = "",
+    reason: str = "",
+) -> str:
+    """Warn a group member. If they reach 3 warnings, they are automatically muted for 24 hours.
+
+    Args:
+        user_id: Telegram user ID when known.
+        target: Optional @username, tg://user link, numeric ID, display name, or reply target.
+        reason: Brief reason for warning this user.
+    """
+    user_id, _, refusal = await _resolve_checked_target_member(ctx, user_id, target, "warn")
+    if refusal or user_id is None:
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    # Increment warning count
+    key = f"warns:{chat_id}:{user_id}"
+    warns = await common.memttlcache.get(key) or 0
+    warns += 1
+    await common.memttlcache.set(key, warns, ttl=30 * 86400)  # expires in 30 days
+
+    if warns >= 3:
+        # Reset warnings and mute
+        await common.memttlcache.delete(key)
+        until_date = datetime.now(UTC) + timedelta(hours=24)
+        try:
+            await client.restrict_chat_member(
+                chat_id,
+                user_id,
+                permissions=ChatPermissions(),
+                until_date=until_date,
+            )
+            return f"User {user_id} has been warned (3/3) and automatically muted for 24 hours. Reason: {reason}"
+        except RPCError as e:
+            logger.warning(f"Failed to mute user {user_id} on warning threshold in {chat_id}: {e}")
+            return f"User {user_id} reached 3/3 warnings, but failed to mute them due to bot permission issues."
+    
+    return f"User {user_id} has been warned ({warns}/3). Reason: {reason}"
+
+
+async def reset_user_warnings(
+    ctx: RunContext[datatype.ContextDeps],
+    user_id: int | None = None,
+    target: str = "",
+) -> str:
+    """Reset warning count for a group member back to 0.
+
+    Args:
+        user_id: Telegram user ID when known.
+        target: Optional @username, tg://user link, numeric ID, display name, or reply target.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "reset warnings"):
+        return refusal
+
+    user_id, refusal = await _resolve_moderation_target(ctx, user_id, target)
+    if refusal or user_id is None:
+        return refusal or "Cannot resolve target user."
+
+    chat_id = ctx.deps.chat_id
+    key = f"warns:{chat_id}:{user_id}"
+    await common.memttlcache.delete(key)
+    return f"Warnings for user {user_id} have been reset to 0."
+
+
+async def set_slow_mode(
+    ctx: RunContext[datatype.ContextDeps],
+    seconds: int = 0,
+) -> str:
+    """Set or disable slow mode for the current group chat.
+
+    Args:
+        seconds: Delay in seconds that members must wait before sending another message. Set to 0 to disable slow mode.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "set slow mode"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    try:
+        await client.set_slow_mode(chat_id, seconds)
+        if seconds > 0:
+            return f"Slow mode has been enabled. Members must wait {seconds} seconds between messages."
+        else:
+            return "Slow mode has been disabled."
+    except RPCError as e:
+        logger.warning(f"Failed to set slow mode in {chat_id}: {e}")
+        return f"Failed to set slow mode: {e.__class__.__name__}. The bot may lack permission."
+
+
+async def set_chat_permissions(
+    ctx: RunContext[datatype.ContextDeps],
+    send_messages: bool = True,
+    send_media: bool = True,
+    send_stickers: bool = True,
+    send_gifs: bool = True,
+    send_games: bool = True,
+    send_inline: bool = True,
+    embed_links: bool = True,
+) -> str:
+    """Set default permissions for all non-admin members in the current group.
+
+    Args:
+        send_messages: Allow members to send text messages.
+        send_media: Allow members to send media (photos, videos, voice notes, documents).
+        send_stickers: Allow members to send stickers.
+        send_gifs: Allow members to send animations/GIFs.
+        send_games: Allow members to send games.
+        send_inline: Allow members to use inline bots.
+        embed_links: Allow members to send links that embed preview.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "set chat permissions"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    try:
+        await client.set_chat_permissions(
+            chat_id,
+            ChatPermissions(
+                can_send_messages=send_messages,
+                can_send_media_messages=send_media,
+                can_send_other_messages=send_stickers or send_gifs or send_games or send_inline,
+                can_add_web_page_previews=embed_links,
+            )
+        )
+        return "Group permissions updated successfully."
+    except RPCError as e:
+        logger.warning(f"Failed to set chat permissions in {chat_id}: {e}")
+        return f"Failed to set chat permissions: {e.__class__.__name__}. The bot may lack permissions."
+
+
+async def set_chat_title(
+    ctx: RunContext[datatype.ContextDeps],
+    title: str,
+) -> str:
+    """Change the title of the current group chat.
+
+    Args:
+        title: The new title for the group chat.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "set chat title"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    try:
+        await client.set_chat_title(chat_id, title)
+        return f"Group title has been changed to '{title}'."
+    except RPCError as e:
+        logger.warning(f"Failed to set chat title in {chat_id}: {e}")
+        return f"Failed to change group title: {e.__class__.__name__}. The bot may lack permission."
+
+
+async def set_chat_description(
+    ctx: RunContext[datatype.ContextDeps],
+    description: str,
+) -> str:
+    """Change the description of the current group chat.
+
+    Args:
+        description: The new description for the group chat.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "set chat description"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    try:
+        await client.set_chat_description(chat_id, description)
+        return "Group description has been updated successfully."
+    except RPCError as e:
+        logger.warning(f"Failed to set chat description in {chat_id}: {e}")
+        return f"Failed to change group description: {e.__class__.__name__}. The bot may lack permission."
+
+
+async def lock_chat(
+    ctx: RunContext[datatype.ContextDeps],
+) -> str:
+    """Lock the current group chat, preventing all non-admin members from sending messages.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "lock chat"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    try:
+        await client.set_chat_permissions(
+            chat_id,
+            ChatPermissions(
+                can_send_messages=False,
+                can_send_media_messages=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+            )
+        )
+        return "Group chat has been locked. Only administrators can send messages."
+    except RPCError as e:
+        logger.warning(f"Failed to lock chat {chat_id}: {e}")
+        return f"Failed to lock chat: {e.__class__.__name__}. The bot may lack permission."
+
+
+async def unlock_chat(
+    ctx: RunContext[datatype.ContextDeps],
+) -> str:
+    """Unlock the current group chat, restoring sending permissions for all members.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "unlock chat"):
+        return refusal
+
+    chat_id = ctx.deps.chat_id
+    client = ctx.deps.client
+
+    try:
+        await client.set_chat_permissions(
+            chat_id,
+            ChatPermissions(
+                can_send_messages=True,
+                can_send_media_messages=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True,
+            )
+        )
+        return "Group chat has been unlocked. All members can now send messages."
+    except RPCError as e:
+        logger.warning(f"Failed to unlock chat {chat_id}: {e}")
+        return f"Failed to unlock chat: {e.__class__.__name__}. The bot may lack permission."
+
+
 async def is_user_blocked(user_id: int) -> bool:
     """Check if a user is currently blocked from triggering the agent.
 
