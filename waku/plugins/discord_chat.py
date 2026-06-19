@@ -1077,6 +1077,7 @@ async def _set_discord_guild_settings(
         config.discord_ai_reply = settings.ai_reply
         config.group_memory_enabled = settings.group_memory_enabled
         config.setu_enabled = settings.setu_enabled
+        config.lang = settings.lang
         chat.chat_config = config
         await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild.id}")
@@ -1109,6 +1110,7 @@ async def _set_discord_guild_settings_by_id(
         config.discord_ai_reply = settings.ai_reply
         config.group_memory_enabled = settings.group_memory_enabled
         config.setu_enabled = settings.setu_enabled
+        config.lang = settings.lang
         chat.chat_config = config
         await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild_id}")
@@ -1179,6 +1181,7 @@ async def _set_discord_dm_settings(
         config.discord_r18_mode = 0
         config.discord_ai_reply = settings.ai_reply
         config.setu_enabled = settings.setu_enabled
+        config.lang = settings.lang
         chat.chat_config = config
         await session.commit()
     await common.memttlcache.delete(f"chat_config:{dm_id}")
