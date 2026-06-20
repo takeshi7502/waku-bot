@@ -69,40 +69,20 @@ async def set_member_title(client: PyrogramClient, message: pyrogram.types.Messa
                 user=(await mention_html(user)),
             )
         )
-        # check if the bot is an admin with can_promote_members before trying to promote the user, otherwise fallback to set_chat_member_tag if the bot doesn't have the permission
-        me = await common.get_chat_member(client, chat.id, "me")
-        if (
-            me.status != pyrogram.enums.ChatMemberStatus.ADMINISTRATOR
-            or not me.privileges.can_promote_members
-        ):
+        # Check if the target user is an administrator or creator
+        target_member = await common.get_chat_member(client, chat.id, target.id)
+        is_admin = target_member.status in (
+            pyrogram.enums.ChatMemberStatus.ADMINISTRATOR,
+            pyrogram.enums.ChatMemberStatus.OWNER,
+        )
+        if is_admin:
+            await client.set_administrator_title(chat.id, target.id, custom_title)
+        else:
             await client.set_chat_member_tag(
                 chat.id,
                 target.id,
                 tag=custom_title,
             )
-            await message.reply_text(text, parse_mode=pyrogram.enums.ParseMode.HTML)
-            return
-        await client.promote_chat_member(
-            chat.id,
-            target.id,
-            privileges=pyrogram.types.ChatAdministratorRights(
-                can_manage_chat=True,
-                can_change_info=permissions.get("can_change_info", False),
-                can_delete_messages=permissions.get("can_delete_messages", False),
-                can_restrict_members=permissions.get("can_restrict_members", False),
-                can_invite_users=permissions.get("can_invite_users", False),
-                can_pin_messages=permissions.get("can_pin_messages", False),
-                can_post_stories=permissions.get("can_post_stories", False),
-                can_edit_stories=permissions.get("can_edit_stories", False),
-                can_delete_stories=permissions.get("can_delete_stories", False),
-                can_manage_video_chats=permissions.get("can_manage_video_chats", False),
-                can_promote_members=permissions.get("can_promote_members", False),
-                can_manage_topics=permissions.get("can_manage_topics", False),
-                can_manage_tags=permissions.get("can_manage_tags", False),
-            ),
-        )
-        await asyncio.sleep(0.5)
-        await client.set_administrator_title(chat.id, target.id, custom_title)
         await message.reply_text(text, parse_mode=pyrogram.enums.ParseMode.HTML)
     except pyrogram.errors.UserCreator:
         await message.reply_text(
