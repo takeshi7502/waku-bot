@@ -1,4 +1,4 @@
-﻿import pyrogram
+import pyrogram
 
 from waku import common, database, enums, i18n
 from waku.common.utils import is_explicit_reply
@@ -17,7 +17,7 @@ async def set_user_bot_admin_in_chat(
     if not chat or not user:
         return
     chat_config = await database.get_chat_config(chat)
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "promote"):
         await message.reply(
             i18n.t("bot.msg.no_permission_group", locale=chat_config.lang)
         )

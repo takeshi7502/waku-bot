@@ -43,7 +43,7 @@ def _calculate_block_duration(requested_minutes: int, affection_rank: float) -> 
 
 
 async def _can_request_moderation_action(
-    ctx: RunContext[datatype.ContextDeps],
+    ctx: RunContext[datatype.ContextDeps], action: str | None = None
 ) -> bool:
     """Check whether the current requester may trigger moderation tools.
 
@@ -65,7 +65,7 @@ async def _can_request_moderation_action(
         if association is not None and association.is_bot_admin:
             return True
 
-        return await common.can_user_manage_bot_in_chat(user_id, chat_id)
+        return await common.can_user_manage_bot_in_chat(user_id, chat_id, action)
     except Exception as e:
         logger.warning(
             f"Failed to verify moderation requester {user_id} "
@@ -183,7 +183,7 @@ async def _ensure_group_management_allowed(
         return "AI group management is disabled for this group. Ask a group manager to enable it in /config first."
     if _is_self_management_request(ctx, target_user_id, action):
         return None
-    if not await _can_request_moderation_action(ctx):
+    if not await _can_request_moderation_action(ctx, action):
         return f"Only group admins or bot admins can ask me to {action} other users."
     return None
 

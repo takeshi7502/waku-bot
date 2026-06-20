@@ -1192,10 +1192,30 @@ async def _discord_dm_ai_reply_enabled(user: discord.abc.User) -> bool:
 
 
 async def _discord_r18_mode(guild: discord.Guild | None) -> int:
-    return (await _discord_guild_settings(guild)).r18_mode
+    settings = await _discord_guild_settings(guild)
+    if not settings.setu_enabled:
+        return 0
+    return settings.r18_mode
 
 
-def _r18_mode_label(setu_enabled: bool, r18_mode: int) -> str:
+def _r18_mode_label(arg1, arg2=None) -> str:
+    if arg2 is None:
+        # Pattern: _r18_mode_label(r18_mode)
+        r18_mode = int(arg1)
+        setu_enabled = True
+    elif isinstance(arg1, bool):
+        # Pattern: _r18_mode_label(setu_enabled, r18_mode)
+        setu_enabled = arg1
+        r18_mode = int(arg2)
+    elif isinstance(arg2, bool):
+        # Pattern: _r18_mode_label(r18_mode, setu_enabled)
+        r18_mode = int(arg1)
+        setu_enabled = arg2
+    else:
+        # Fallback
+        setu_enabled = bool(arg1)
+        r18_mode = int(arg2)
+
     if not setu_enabled:
         return "OFF"
     return {

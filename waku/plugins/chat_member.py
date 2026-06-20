@@ -151,7 +151,7 @@ async def sync_chat_members(client: Client, message: Message):
         logger.error(f"Failed to upsert chat {chat.id}")
         return
     lang = db_chat.chat_config.lang
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "syncmembers"):
         await message.reply_text(i18n.t("bot.msg.no_permission_group", locale=lang))
         return
     running_op = get_group_member_operation(chat.id)

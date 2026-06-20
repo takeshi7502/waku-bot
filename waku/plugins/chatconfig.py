@@ -130,7 +130,7 @@ class ChatConfigMarkup:
 async def config_chat_cmd(client: pyrogram.Client, message: pyrogram.types.Message):
     user = message.sender_chat or message.from_user
     chat = message.chat
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         chat_config = await database.get_chat_config(chat)
         lang = chat_config.lang
         await message.reply(
@@ -151,7 +151,7 @@ async def config_chat(
 ):
     chat = callback_query.message.chat
     user = callback_query.from_user
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         user_config = await database.get_user_config(user)
         await callback_query.answer(
             text=i18n.t("bot.msg.no_permission_group", locale=user_config.lang),

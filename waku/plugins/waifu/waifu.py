@@ -1,4 +1,4 @@
-﻿import html
+import html
 import random
 from io import BytesIO
 
@@ -129,7 +129,7 @@ async def remove_waifu(client: PyrogramClient, query: pyrogram.types.CallbackQue
         return
     if not chat.id or not user.id:
         return
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         user_config = await database.get_user_config(user)
         await query.answer(
             text=i18n.t("bot.msg.no_permission_group", locale=user_config.lang),

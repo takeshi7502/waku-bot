@@ -1,4 +1,4 @@
-﻿import pyrogram
+import pyrogram
 
 from waku import common, database
 from waku.i18n import i18n
@@ -53,7 +53,7 @@ async def change_group_lang(client: pyrogram.Client, message: pyrogram.types.Mes
     chat = message.chat
     chat_config = await database.get_chat_config(chat)
     lang = chat_config.lang
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         await message.reply(
             text=i18n.t("bot.msg.no_permission_group", locale=lang),
         )
@@ -77,7 +77,7 @@ async def change_lang(
         if not callback_query.from_user or not callback_query.message.chat:
             return
         if not await common.can_user_manage_bot_in_chat(
-            callback_query.from_user, callback_query.message.chat
+            callback_query.from_user, callback_query.message.chat, "change_info"
         ):
             await callback_query.answer(
                 text=i18n.t("bot.msg.no_permission_group", locale=select_lang),

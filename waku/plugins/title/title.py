@@ -148,7 +148,7 @@ async def set_title_permissions(
     if chat is None or chat.id is None or user is None:
         return
     chat_config = await database.get_chat_config(chat.id)
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         await message.reply_text(
             i18n.t("bot.msg.no_permission_group", locale=chat_config.lang),
             parse_mode=pyrogram.enums.ParseMode.HTML,
@@ -176,7 +176,7 @@ async def set_title_permissions_callback(
     if chat is None or chat.id is None or user is None:
         return
     chat_config = await database.get_chat_config(chat.id)
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         await query.answer(
             i18n.t("bot.msg.no_permission_group", locale=chat_config.lang),
             show_alert=True,

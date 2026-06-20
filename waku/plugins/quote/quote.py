@@ -1,4 +1,4 @@
-﻿import html
+import html
 import math
 import random
 import re
@@ -115,7 +115,7 @@ async def set_quote_probability(
     chat_config = await database.get_chat_config(chat.id)
     if not chat_config:
         return
-    if not await common.can_user_manage_bot_in_chat(user, chat):
+    if not await common.can_user_manage_bot_in_chat(user, chat, "change_info"):
         await message.reply_text(
             i18n.t("bot.msg.no_permission_group", locale=chat_config.lang)
         )
@@ -172,7 +172,7 @@ async def delete_quote_in_chat(client: PyrogramClient, message: pyrogram.types.M
     chat = message.chat
     chat_config = await database.get_chat_config(chat.id)
     user = message.sender_chat or message.from_user
-    is_admin = await common.can_user_manage_bot_in_chat(user, chat)
+    is_admin = await common.can_user_manage_bot_in_chat(user, chat, "delete messages")
 
     quote_link = None
     reply_target = None
@@ -265,7 +265,7 @@ async def delete_quote_in_private(
         return
     quote_chat_id, _ = result
     if user.id not in (quote.user_id, quote.qer_id) and not (
-        await common.can_user_manage_bot_in_chat(user, quote_chat_id)
+        await common.can_user_manage_bot_in_chat(user, quote_chat_id, "delete messages")
     ):
         await message.reply_text(
             i18n.t(

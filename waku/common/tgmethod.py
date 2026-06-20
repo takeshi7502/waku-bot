@@ -164,8 +164,36 @@ async def mention_html(chat: User | Chat | UserData | ChatData) -> str:
     return f"<a href='tg://user?id={db_user.id}'>{html.escape(db_user.full_name)}</a>"
 
 
+def get_required_privilege(action: str | None) -> str:
+    if not action:
+        return "can_promote_members"
+    action = action.lower()
+    if action in {"ban", "kick", "mute", "unban", "unmute", "warn", "reset warnings"}:
+        return "can_restrict_members"
+    if action in {"promote", "demote"}:
+        return "can_promote_members"
+    if action in {"set tag", "clear tag"}:
+        return "can_manage_tags"
+    if action in {"delete messages", "delete message"}:
+        return "can_delete_messages"
+    if action in {"pin message", "unpin message"}:
+        return "can_pin_messages"
+    if action in {
+        "set slow mode",
+        "set chat permissions",
+        "set chat title",
+        "set chat description",
+        "lock chat",
+        "unlock chat",
+        "change_info",
+        "syncmembers",
+    }:
+        return "can_change_info"
+    return "can_promote_members"
+
+
 async def can_user_manage_bot_in_chat(
-    user: User | Chat | int, chat: Chat | int
+    user: User | Chat | int, chat: Chat | int, action: str | None = None
 ) -> bool:
     if isinstance(chat, Chat):
         if chat.type == ChatType.PRIVATE:
@@ -188,7 +216,10 @@ async def can_user_manage_bot_in_chat(
         return False
     if association.is_bot_admin:
         return True
-    if await memttlcache.get(f"can_manage_bot:{user_id}:{chat_id}", None):
+    cache_key = f"can_manage_bot:{user_id}:{chat_id}"
+    if action:
+        cache_key = f"{cache_key}:{action}"
+    if await memttlcache.get(cache_key, None):
         return True
     chat_member = await client.get_chat_member(chat_id, user_id)
     if chat_member.status == ChatMemberStatus.OWNER:
@@ -196,12 +227,11 @@ async def can_user_manage_bot_in_chat(
         await database.update_association(association)
         return True
     if chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-        if (
-            chat_member.privileges is not None
-            and chat_member.privileges.can_promote_members
-        ):
-            await memttlcache.set(f"can_manage_bot:{user_id}:{chat_id}", True, ttl=3600)
-            return True
+        if chat_member.privileges is not None:
+            privilege = get_required_privilege(action)
+            if getattr(chat_member.privileges, privilege, False):
+                await memttlcache.set(cache_key, True, ttl=3600)
+                return True
     return False
 
 
