@@ -1,4 +1,4 @@
-﻿import datetime
+import datetime
 
 import pyrogram
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ class CommentResult(BaseModel):
     poll_is_anonymous: bool = Field(default=True, description="投票是否匿名")
 
 
-comment_agent = Agent(model=struct_model, output_type=CommentResult, retries=5)
+comment_agent = Agent(model=struct_model, retries=5)
 
 
 async def _is_first_media_in_group(message: pyrogram.types.Message) -> bool:
@@ -113,8 +113,18 @@ async def comment_channel_message(client: Client, message: pyrogram.types.Messag
         f"任务描述: {app_config.agent_channel_comment_prompt}",
     ]
     instructions += "\n\n" + "\n".join(ctx_parts)
+    instructions += (
+        "\n\n请以 JSON 格式输出，不要返回任何其他内容。如果需要提供投票，请在 JSON 中设定相应参数，否则设定为 null 或默认值。格式如下：\n"
+        "{\n"
+        '  "comment": "评论内容",\n'
+        '  "poll_question": "投票问题，如果没有则为 null",\n'
+        '  "poll_options": ["选项1", "选项2"],\n'
+        '  "poll_is_anonymous": true\n'
+        "}"
+    )
 
     prompts, _ = await get_input_prompt(client, message, ctx=None)
+
     if not prompts:
         return
     logger.debug(f"Channel comment post: {message.caption or message.text}")
@@ -125,19 +135,41 @@ async def comment_channel_message(client: Client, message: pyrogram.types.Messag
                 instructions=instructions,
                 user_prompt=prompts,
             )
-            output = result.output
-            if output.comment:
-                await reply_output(client, message, output.comment)
+            text_output = result.output
+            
+            import json
+            import re
+            
+            comment = ""
+            poll_question = None
+            poll_options = None
+            poll_is_anonymous = True
+            
+            json_match = re.search(r"\{.*\}", text_output, re.DOTALL)
+            if json_match:
+                try:
+                    data = json.loads(json_match.group(0))
+                    comment = data.get("comment", "")
+                    poll_question = data.get("poll_question")
+                    poll_options = data.get("poll_options")
+                    poll_is_anonymous = data.get("poll_is_anonymous", True)
+                except Exception:
+                    comment = text_output
+            else:
+                comment = text_output
+
+            if comment:
+                await reply_output(client, message, comment)
             if (
-                output.poll_question
-                and output.poll_options
-                and len(output.poll_options) >= 2
+                poll_question
+                and poll_options
+                and len(poll_options) >= 2
             ):
                 await client.send_poll(
                     chat_id=chat.id,
-                    question=output.poll_question,
-                    options=output.poll_options,
-                    is_anonymous=output.poll_is_anonymous,
+                    question=poll_question,
+                    options=poll_options,
+                    is_anonymous=poll_is_anonymous,
                     reply_parameters=pyrogram.types.ReplyParameters(
                         message_id=message.id
                     ),

@@ -40,11 +40,11 @@ def _get_mod_agent():
         from waku.plugins.agent.agent import small_model
         _mod_agent = Agent(
             model=small_model,
-            result_type=ModResult,
             system_prompt=(
                 "You are an expert Telegram chat moderator. Analyze the message content "
                 "and determine if it is spam, advertisement, scam, or highly toxic/abusive/pornographic. "
-                "Be conservative but accurate. Normal chat, jokes, or swearing without abuse should be classified as safe (is_spam=False)."
+                "Be conservative but accurate. Normal chat, jokes, or swearing without abuse should be classified as safe.\n"
+                "Please output in JSON format: {\"is_spam\": true/false, \"reason\": \"your reason\"}."
             )
         )
     return _mod_agent
@@ -95,11 +95,29 @@ async def run_ai_moderation(client: Client, chat_id: int, user_id: int, message_
     try:
         mod_agent = _get_mod_agent()
         result = await mod_agent.run(f"Message content: {text}")
-        if result.data.is_spam:
-            logger.info(f"[Auto-Mod] AI flagged message {message_id} in {chat_id} from {user_id} as spam: {result.data.reason}")
-            await execute_moderation_action(client, chat_id, user_id, message_id, f"AI Filter: {result.data.reason}")
+        
+        import json
+        import re
+        
+        text_output = result.output
+        is_spam = False
+        reason = ""
+        
+        json_match = re.search(r"\{.*\}", text_output, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(0))
+                is_spam = data.get("is_spam", False)
+                reason = data.get("reason", "")
+            except Exception:
+                pass
+                
+        if is_spam:
+            logger.info(f"[Auto-Mod] AI flagged message {message_id} in {chat_id} from {user_id} as spam: {reason}")
+            await execute_moderation_action(client, chat_id, user_id, message_id, f"AI Filter: {reason}")
     except Exception as e:
         logger.error(f"[Auto-Mod] Error in AI moderation: {e}")
+
 
 
 @Client.on_message(filters.group & ~filters.service & ~filters.me, group=5)

@@ -30,8 +30,7 @@ class RelevanceCheck(BaseModel):
 if small_model:
     _default_relevance_check_agent = Agent(
         model=small_model or model,
-        output_type=RelevanceCheck,
-        system_prompt="你是一个对话相关性判断助手。判断用户的新消息是否是对之前对话的延续。",
+        system_prompt="你是一个对话相关性判断助手。判断用户的新消息是否是对之前对话的延续。请以 JSON 格式输出，格式为：{\"relevance\": true/false, \"reason\": \"说明\"}，不要返回任何其他多余文本。",
         retries=2,
     )
 else:
@@ -40,17 +39,17 @@ else:
 
 def _make_relevance_check_agent(
     override_model_spec: str | None,
-) -> Agent[None, RelevanceCheck] | None:
+) -> Agent[None, str] | None:
     """Return a relevance-check agent using the per-chat small model override if set,
     otherwise fall back to the module-level default (which uses the global small_model)."""
     if override_model_spec:
         return Agent(
             model=provider.make_chat_model(override_model_spec),
-            output_type=RelevanceCheck,
-            system_prompt="你是一个对话相关性判断助手。判断用户的新消息是否是对之前对话的延续。",
+            system_prompt="你是一个对话相关性判断助手。判断用户的新消息是否是对之前对话的延续。请以 JSON 格式输出，格式为：{\"relevance\": true/false, \"reason\": \"说明\"}，不要返回任何其他多余文本。",
             retries=2,
         )
     return _default_relevance_check_agent
+
 
 
 async def _follow_up_filter_func(
@@ -196,7 +195,20 @@ Bot回复: {bot_full_output}
         else:
             relevance_result = await coro
 
-        if not relevance_result.output.relevance:  # type: ignore[union-attr]
+        import json
+        import re
+
+        text_output = relevance_result.output
+        relevance = False
+        json_match = re.search(r"\{.*\}", text_output, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(0))
+                relevance = data.get("relevance", False)
+            except Exception:
+                pass
+
+        if not relevance:
             return
     except Exception as e:
         logger.error(

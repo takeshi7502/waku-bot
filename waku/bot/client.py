@@ -1,4 +1,4 @@
-﻿from os import cpu_count
+from os import cpu_count
 from pathlib import Path
 
 from pyrogram.client import Client
@@ -13,16 +13,13 @@ def _build_plugins_config() -> dict[str, object]:
     so no agent handlers or side effects are loaded.
     """
     root = "waku.plugins"
-    if app_config.agent:
-        return {"root": root}
-
     plugins_dir = Path(__file__).resolve().parent.parent / "plugins"
     include: list[str] = []
     for module_file in sorted(plugins_dir.rglob("*.py")):
         rel = module_file.relative_to(plugins_dir)
         if not rel.parts:
             continue
-        if rel.parts[0] == "agent":
+        if not app_config.agent and rel.parts[0] == "agent":
             continue
         if "__pycache__" in rel.parts:
             continue
@@ -31,6 +28,7 @@ def _build_plugins_config() -> dict[str, object]:
         include.append(".".join(rel.with_suffix("").parts))
 
     return {"root": root, "include": include}
+
 
 
 client = Client(
