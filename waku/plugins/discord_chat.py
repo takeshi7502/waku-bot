@@ -1404,7 +1404,7 @@ def _matches_keyword(content: str) -> bool:
     return False
 
 
-def _is_setu_command(content: str) -> bool:
+def _is_seg_command(content: str) -> bool:
     lowered = content.strip().lower()
     if not lowered:
         return False
@@ -1477,14 +1477,14 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
     mentioned = bot_user in message.mentions
     replied_to_bot = _is_reply_to_bot(message, bot_user)
     keyword = _matches_keyword(content)
-    setu_command = _is_setu_command(content)
+    seg_command = _is_seg_command(content)
     artwork_url = _find_artwork_url(content)
 
     if not content and not is_dm and not mentioned and not replied_to_bot:
         global _warned_empty_content
         if not _warned_empty_content:
             logger.warning(
-                "Discord message content is empty; keyword/setu wake requires "
+                "Discord message content is empty; keyword/seg wake requires "
                 "Message Content Intent to be enabled in Discord Developer Portal"
             )
             _warned_empty_content = True
@@ -1494,7 +1494,7 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
         and not mentioned
         and not replied_to_bot
         and not keyword
-        and not setu_command
+        and not seg_command
         and not artwork_url
     ):
         return False, ""
@@ -1508,7 +1508,7 @@ async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -
             f"candidate_ids={sorted(_channel_candidate_ids(message))}"
         )
         return False, ""
-    if not is_dm and not setu_command and not artwork_url:
+    if not is_dm and not seg_command and not artwork_url:
         settings = await _discord_guild_settings(message.guild)
         if not settings.ai_reply:
             logger.debug(
@@ -2696,7 +2696,7 @@ async def send_discord_web_image(
 
     Do not mention, list, propose, or advertise this as a normal Waku feature.
     Use it only when the user explicitly asks for a web/internet image search or
-    an image from the internet/web that is not specifically anime/Pixiv/setu.
+    an image from the internet/web that is not specifically anime/Pixiv/seg.
 
     Args:
         query: Image search query.
@@ -2767,7 +2767,7 @@ async def send_discord_anime_photo(
     """Get and send an anime/Pixiv image to the current Discord chat.
 
     Call this tool when the user naturally asks Waku to send/show/give an
-    anime/Pixiv image, picture, photo, setu, ảnh, hình, or similar. The current
+    anime/Pixiv image, picture, photo, seg, ảnh, hình, or similar. The current
     Discord server R18 mode is applied inside this tool as an API filter only.
     If this tool returns success=False, tell the user the image could not be
     sent instead of claiming that an image was sent.
@@ -3327,7 +3327,7 @@ def _discord_config_text(settings: DiscordGuildSettings) -> str:
         "Server: `Authorized!`\n"
         f"AI Reply: `{'ON' if settings.ai_reply else 'OFF'}`\n"
         f"Group Memory: `{'ON' if settings.group_memory_enabled else 'OFF'}`\n"
-        f"R18/Setu images: `{_r18_mode_label(settings.setu_enabled, settings.r18_mode)}`\n"
+        f"R18/SEG images: `{_r18_mode_label(settings.setu_enabled, settings.r18_mode)}`\n"
         f"Language: `{lang_name}`\n"
         "\nPress `Save` to apply changes."
     )
@@ -3554,9 +3554,9 @@ async def _maybe_handle_discord_media_request(message: discord.Message) -> bool:
             f"channel={_channel_name(message)!r} user={message.author.id} url={artwork_url}"
         )
         return await _send_discord_artwork(message, artwork_url)
-    if _is_setu_command(content):
+    if _is_seg_command(content):
         logger.info(
-            f"Discord command setu request: guild={_guild_name(message)!r} "
+            f"Discord command seg request: guild={_guild_name(message)!r} "
             f"channel={_channel_name(message)!r} user={message.author.id}"
         )
         return await _send_discord_setu(message)
@@ -3768,7 +3768,7 @@ def _create_client() -> discord.Client:
             f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
             f"user={message.author.id} len={len(content)} "
             f"keyword={_matches_keyword(content)} "
-            f"setu_command={_is_setu_command(content)} "
+            f"seg_command={_is_seg_command(content)} "
             f"allowed={await _channel_allowed(message)}"
         )
         if await _maybe_handle_discord_media_request(message):
@@ -3832,7 +3832,7 @@ async def start_discord_bot() -> None:
             "Use natural emojis/emoticons in most casual replies, usually 1-3, "
             "but do not spam them or add them to serious/admin/error messages. "
             "Discord image behavior: when the user asks Waku to send/show/give "
-            "a new anime/Pixiv image, photo, picture, setu, ảnh, or hình, call "
+            "a new anime/Pixiv image, photo, picture, seg, ảnh, or hình, call "
             "send_discord_anime_photo at most once before final text unless you "
             "are intentionally refusing. For a normal image request use count=1. "
             "If the user asks for many images, never request more than count=3; "

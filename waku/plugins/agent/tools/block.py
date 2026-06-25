@@ -1,16 +1,12 @@
 import asyncio
-import random
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from time import monotonic
 
 import pyrogram
 from pydantic_ai import RunContext
-from pyrogram import filters
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import RPCError
-from pyrogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
+from pyrogram.types import ChatPermissions
 
 from waku import common, database
 from waku.affection import get_affection_rank
@@ -18,10 +14,8 @@ from waku.config import app_config
 from waku.database.models import UserChatAssociation, UserData
 from waku.logger import logger
 from waku.plugins.member_ops import (
-    acquire_group_member_operation,
     describe_group_member_operation,
     get_group_member_operation,
-    release_group_member_operation,
     request_group_member_operation_stop,
 )
 
@@ -109,33 +103,53 @@ async def _is_protected_bot_admin_or_owner(user_id: int, chat_id: int) -> bool:
         return False
 
 
+
+def _admin_rights_from_title_permissions(permissions: dict | str | None) -> pyrogram.types.ChatAdministratorRights:
+    import json
+    if isinstance(permissions, str):
+        try:
+            permissions = json.loads(permissions)
+        except Exception:
+            permissions = {}
+    permissions = permissions or {}
+    return pyrogram.types.ChatAdministratorRights(
+        can_manage_chat=True,
+        can_change_info=bool(permissions.get("can_change_info", False)),
+        can_delete_messages=bool(permissions.get("can_delete_messages", False)),
+        can_restrict_members=bool(permissions.get("can_restrict_members", False)),
+        can_invite_users=bool(permissions.get("can_invite_users", False)),
+        can_pin_messages=bool(permissions.get("can_pin_messages", False)),
+        can_post_stories=bool(permissions.get("can_post_stories", False)),
+        can_edit_stories=bool(permissions.get("can_edit_stories", False)),
+        can_delete_stories=bool(permissions.get("can_delete_stories", False)),
+        can_manage_video_chats=bool(permissions.get("can_manage_video_chats", False)),
+        can_promote_members=bool(permissions.get("can_promote_members", False)),
+        can_manage_topics=bool(permissions.get("can_manage_topics", False)),
+        can_manage_tags=bool(permissions.get("can_manage_tags", False)),
+    )
+
+
+def _empty_admin_rights() -> pyrogram.types.ChatAdministratorRights:
+    return pyrogram.types.ChatAdministratorRights(
+        can_manage_chat=False,
+        can_change_info=False,
+        can_delete_messages=False,
+        can_restrict_members=False,
+        can_invite_users=False,
+        can_pin_messages=False,
+        can_post_stories=False,
+        can_edit_stories=False,
+        can_delete_stories=False,
+        can_manage_video_chats=False,
+        can_promote_members=False,
+        can_manage_topics=False,
+        can_manage_tags=False,
+    )
+
+
 _SELF_MODERATION_ACTIONS = {"ban", "kick", "mute"}
 _SELF_MANAGEMENT_ACTIONS = _SELF_MODERATION_ACTIONS | {"set tag", "clear tag"}
 _MAX_MEMBER_TAG_LENGTH = 16
-_GAY_MODE_CALLBACK_PREFIX = "waku_gaymode"
-_GAY_MODE_PROGRESS_INTERVAL_SECONDS = 5.0
-_GAY_MODE_PROGRESS_BAR_WIDTH = 12
-
-
-@dataclass
-class GayModeJob:
-    chat_id: int
-    owner_id: int
-    mode: str
-    total: int
-    skipped: int
-    operation: object
-    task: asyncio.Task | None = None
-    progress_message: pyrogram.types.Message | None = None
-    stop_requested: bool = False
-    processed: int = 0
-    ok: int = 0
-    errors: int = 0
-    started_at: float = 0.0
-    last_progress_at: float = 0.0
-
-
-_GAY_MODE_JOBS: dict[int, GayModeJob] = {}
 _SELF_TARGET_ALIASES = {
     "self",
     "me",
@@ -210,10 +224,17 @@ async def _get_checked_target_member(
 
     if member.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
         return None, f"User {user_id} is not an active member of this group."
-    if await _is_protected_bot_admin_or_owner(user_id, chat_id):
+
+    harmful_actions = {"ban", "kick", "mute", "warn", "demote"}
+    target_is_protected_bot_admin = await _is_protected_bot_admin_or_owner(
+        user_id, chat_id
+    )
+    if action in harmful_actions and target_is_protected_bot_admin:
         return None, f"Cannot {action} bot admin or owner."
-    if member.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR):
-        return None, f"Refusing to {action} a group owner or administrator."
+    if member.status == ChatMemberStatus.OWNER:
+        return None, f"Refusing to {action} the group owner."
+    if member.status == ChatMemberStatus.ADMINISTRATOR and action in harmful_actions:
+        return None, f"Refusing to {action} a group administrator."
     return member, None
 
 _USER_ID_RE = re.compile(r"(?<!\d)-?\d{5,}(?!\d)")
@@ -752,36 +773,6 @@ async def get_or_create_private_invite_link(ctx: RunContext[datatype.ContextDeps
             return f"Failed to create invite link: {e.__class__.__name__}. The bot may lack invite permissions."
 
 
-async def _gay_mode_targets(ctx: RunContext[datatype.ContextDeps]):
-    rows = await database.get_chat_member_snapshots(ctx.deps.chat_id)
-    targets = []
-    skipped = 0
-    me = await ctx.deps.client.get_me()
-    for assoc, user in rows:
-        if user.id <= 0 or not user.is_real_user:
-            skipped += 1
-            continue
-        if user.id == me.id or user.is_bot:
-            skipped += 1
-            continue
-        if assoc.member_status in {"owner", "administrator"} or assoc.member_is_admin:
-            skipped += 1
-            continue
-        targets.append((assoc, user))
-    return targets, skipped, len(rows)
-
-
-async def preview_gay_mode(ctx: RunContext[datatype.ContextDeps]) -> str:
-    """Preview gay mode targets. Bot admins only; ask for confirmation before activating."""
-    if refusal := await _ensure_true_bot_admin_access(ctx, "preview gay mode"):
-        return refusal
-    targets, skipped, total = await _gay_mode_targets(ctx)
-    return (
-        f"Gay mode check: total={total}, affected={len(targets)}, ignored={skipped}. "
-        "Ask the admin to confirm before calling activate_gay_mode(confirm=True)."
-    )
-
-
 async def stop_syncmembers(ctx: RunContext[datatype.ContextDeps]) -> str:
     """Stop a running /syncmembers job in this group immediately. Bot admins only; no confirmation needed."""
     if refusal := await _ensure_true_bot_admin_access(ctx, "stop syncmembers"):
@@ -793,286 +784,6 @@ async def stop_syncmembers(ctx: RunContext[datatype.ContextDeps]) -> str:
             return "No /syncmembers job is running in this group."
         return f"Cannot stop /syncmembers because {describe_group_member_operation(running_op)} is running instead."
     return "Stop request sent to /syncmembers. It will stop at the next safe checkpoint without confirmation."
-
-
-
-def _has_running_gay_mode_job(chat_id: int) -> bool:
-    job = _GAY_MODE_JOBS.get(chat_id)
-    return bool(job is not None and job.task is not None and not job.task.done())
-
-
-def _gay_mode_bar(processed: int, total: int) -> str:
-    if total <= 0:
-        return ""
-    filled = min(_GAY_MODE_PROGRESS_BAR_WIDTH, round(processed / total * _GAY_MODE_PROGRESS_BAR_WIDTH))
-    return "█" * filled + "░" * (_GAY_MODE_PROGRESS_BAR_WIDTH - filled)
-
-
-def _elapsed_text(started_at: float) -> str:
-    elapsed = max(0, int(monotonic() - started_at))
-    minutes, seconds = divmod(elapsed, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    return f"{minutes:02d}:{seconds:02d}"
-
-
-def _gay_mode_progress_text(job: GayModeJob, status: str) -> str:
-    title = "Gaymode" if job.mode == "activate" else "Hủy gaymode"
-    return "\n".join([
-        f"<b>{title} đang chạy...</b>",
-        f"<code>[{_gay_mode_bar(job.processed, job.total)}]</code> {job.processed}/{job.total}",
-        f"OK: <code>{job.ok}</code> | Skipped: <code>{job.skipped}</code> | Error: <code>{job.errors}</code>",
-        f"Elapsed: <code>{_elapsed_text(job.started_at)}</code>",
-        f"Group: <code>{job.chat_id}</code>",
-        f"Status: <code>{status}</code>",
-    ])
-
-
-def _gay_mode_stop_markup(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data=f"{_GAY_MODE_CALLBACK_PREFIX}|stop|{chat_id}")]])
-
-
-def _gay_mode_confirm_markup(chat_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅", callback_data=f"{_GAY_MODE_CALLBACK_PREFIX}|confirm_stop|{chat_id}"),
-        InlineKeyboardButton("❌", callback_data=f"{_GAY_MODE_CALLBACK_PREFIX}|cancel_stop|{chat_id}"),
-    ]])
-
-
-async def _edit_gay_mode_progress(job: GayModeJob, status: str, force: bool = False, final: bool = False) -> None:
-    now = monotonic()
-    if not force and now - job.last_progress_at < _GAY_MODE_PROGRESS_INTERVAL_SECONDS:
-        return
-    job.last_progress_at = now
-    markup = None if final else _gay_mode_stop_markup(job.chat_id)
-    try:
-        if job.progress_message is None:
-            return
-        await job.progress_message.edit_text(_gay_mode_progress_text(job, status), reply_markup=markup)
-    except Exception as e:
-        logger.debug(f"Failed to update gaymode progress for {job.chat_id}: {e}")
-
-
-async def _send_gay_mode_private_start(client, job: GayModeJob) -> None:
-    try:
-        job.progress_message = await client.send_message(
-            chat_id=job.owner_id,
-            text=_gay_mode_progress_text(job, "starting"),
-            reply_markup=_gay_mode_stop_markup(job.chat_id),
-        )
-    except Exception as e:
-        logger.warning(f"Failed to send private gaymode progress to {job.owner_id}: {e}")
-
-
-async def _run_activate_gay_mode_job(
-    client,
-    job: GayModeJob,
-    targets: list[tuple[UserChatAssociation, UserData]],
-) -> None:
-    await _send_gay_mode_private_start(client, job)
-    try:
-        for assoc, user in targets:
-            if job.stop_requested:
-                await _edit_gay_mode_progress(job, "stopped by admin", force=True, final=True)
-                return
-            tag = f"gay {random.randint(0, 100)}%"
-            try:
-                await client.set_chat_member_tag(job.chat_id, user.id, tag=tag)
-                await database.mark_gay_mode_tag(job.chat_id, user.id, assoc.member_tag)
-                job.ok += 1
-                job.processed += 1
-                await _edit_gay_mode_progress(job, f"setting {user.id}")
-            except Exception as e:
-                job.errors += 1
-                logger.warning(f"Gay mode stopped while setting tag for {user.id}: {e}")
-                await _edit_gay_mode_progress(job, f"error at {user.id}: {e.__class__.__name__}", force=True, final=True)
-                return
-        await _edit_gay_mode_progress(job, "completed", force=True, final=True)
-        logger.info(f"Gay mode activation completed in chat {job.chat_id}: ok={job.ok}, skipped={job.skipped}, total={job.total}")
-    finally:
-        release_group_member_operation(job.chat_id, job.operation)
-
-
-async def _run_deactivate_gay_mode_job(
-    client,
-    job: GayModeJob,
-    rows: list[tuple[UserChatAssociation, UserData]],
-) -> None:
-    await _send_gay_mode_private_start(client, job)
-    try:
-        for assoc, user in rows:
-            if job.stop_requested:
-                await _edit_gay_mode_progress(job, "stopped by admin", force=True, final=True)
-                return
-            try:
-                await client.set_chat_member_tag(job.chat_id, user.id, tag=assoc.gay_mode_previous_tag)
-                await database.clear_gay_mode_state(job.chat_id, user.id, assoc.gay_mode_previous_tag)
-                job.ok += 1
-                job.processed += 1
-                await _edit_gay_mode_progress(job, f"restoring {user.id}")
-            except Exception as e:
-                job.errors += 1
-                logger.warning(f"Gay mode restore stopped for {user.id}: {e}")
-                await _edit_gay_mode_progress(job, f"error at {user.id}: {e.__class__.__name__}", force=True, final=True)
-                return
-        await _edit_gay_mode_progress(job, "completed", force=True, final=True)
-        logger.info(f"Gay mode restore completed in chat {job.chat_id}: restored={job.ok}")
-    finally:
-        release_group_member_operation(job.chat_id, job.operation)
-
-
-def _cleanup_gay_mode_job(chat_id: int, task: asyncio.Task) -> None:
-    job = _GAY_MODE_JOBS.get(chat_id)
-    if job is not None and job.task is task:
-        _GAY_MODE_JOBS.pop(chat_id, None)
-
-
-async def activate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
-    """Start a backend job to apply gay mode. Requires explicit confirmation."""
-    if refusal := await _ensure_true_bot_admin_access(ctx, "activate gay mode"):
-        return refusal
-    if not confirm:
-        return await preview_gay_mode(ctx)
-    chat_id = ctx.deps.chat_id
-    running_op = get_group_member_operation(chat_id)
-    if running_op is not None:
-        return f"Cannot start gaymode because {describe_group_member_operation(running_op)} is running for this group."
-    if _has_running_gay_mode_job(chat_id):
-        return "Gay mode backend is already running for this group. Wait for the final result."
-    targets, skipped, total = await _gay_mode_targets(ctx)
-    operation = acquire_group_member_operation(chat_id, "gaymode_activate", ctx.deps.user_id)
-    if operation is None:
-        return "Another member operation is already running for this group."
-    job = GayModeJob(chat_id=chat_id, owner_id=ctx.deps.user_id, mode="activate", total=len(targets), skipped=skipped, operation=operation, started_at=monotonic())
-    task = asyncio.create_task(_run_activate_gay_mode_job(ctx.deps.client, job, targets))
-    job.task = task
-    _GAY_MODE_JOBS[chat_id] = job
-    task.add_done_callback(lambda done_task: _cleanup_gay_mode_job(chat_id, done_task))
-    return "Gay mode backend started. Progress and final result will be sent in private chat."
-
-
-async def deactivate_gay_mode(ctx: RunContext[datatype.ContextDeps], confirm: bool = False) -> str:
-    """Start a backend job to restore member tags changed by gay mode."""
-    if refusal := await _ensure_true_bot_admin_access(ctx, "deactivate gay mode"):
-        return refusal
-    chat_id = ctx.deps.chat_id
-    rows = await database.get_gay_mode_applied_members(chat_id)
-    if not confirm:
-        return f"Gay mode restore check: affected={len(rows)}. Ask for confirmation first."
-    running_op = get_group_member_operation(chat_id)
-    if running_op is not None:
-        return f"Cannot start gaymode restore because {describe_group_member_operation(running_op)} is running for this group."
-    if _has_running_gay_mode_job(chat_id):
-        return "Gay mode backend is already running for this group. Wait for the final result."
-    operation = acquire_group_member_operation(chat_id, "gaymode_deactivate", ctx.deps.user_id)
-    if operation is None:
-        return "Another member operation is already running for this group."
-    job = GayModeJob(chat_id=chat_id, owner_id=ctx.deps.user_id, mode="deactivate", total=len(rows), skipped=0, operation=operation, started_at=monotonic())
-    task = asyncio.create_task(_run_deactivate_gay_mode_job(ctx.deps.client, job, rows))
-    job.task = task
-    _GAY_MODE_JOBS[chat_id] = job
-    task.add_done_callback(lambda done_task: _cleanup_gay_mode_job(chat_id, done_task))
-    return "Gay mode restore backend started. Progress and final result will be sent in private chat."
-
-
-@pyrogram.Client.on_callback_query(filters.regex(rf"^{_GAY_MODE_CALLBACK_PREFIX}\|"), group=0)
-async def gay_mode_progress_callback(client: pyrogram.Client, query: pyrogram.types.CallbackQuery):
-    if query.message is None or query.data is None or query.from_user is None:
-        return
-    _, action, chat_id_text = query.data.split("|", 2)
-    chat_id = int(chat_id_text)
-    job = _GAY_MODE_JOBS.get(chat_id)
-    if job is None:
-        await query.answer("Gaymode task không còn chạy.", show_alert=True)
-        return
-    if query.from_user.id != job.owner_id:
-        await query.answer("Nút này không dành cho bạn.", show_alert=True)
-        return
-    if action == "stop":
-        await query.answer()
-        await query.message.edit_text("<b>Dừng gaymode?</b>", reply_markup=_gay_mode_confirm_markup(chat_id))
-        return
-    if action == "cancel_stop":
-        await query.answer("Tiếp tục chạy.")
-        job.progress_message = query.message
-        await _edit_gay_mode_progress(job, "running", force=True)
-        return
-    if action == "confirm_stop":
-        job.stop_requested = True
-        await query.answer("Đang dừng...")
-        await query.message.edit_text(_gay_mode_progress_text(job, "stopping..."))
-        job.progress_message = query.message
-
-
-
-async def delete_messages(
-    ctx: RunContext[datatype.ContextDeps],
-    message_ids: list[int] | int | None = None,
-    target: str = "",
-    count: int = 1,
-) -> str:
-    """Delete messages in the current group.
-
-    Args:
-        message_ids: Specific message ID or list of message IDs to delete.
-        target: Optional @username, tg://user link, numeric ID, display name, or "me" to delete messages from. If omitted and reply message exists, deletes the replied message.
-        count: Number of recent messages to delete when target is specified or when deleting general recent messages (default 1).
-    """
-    if refusal := await _ensure_group_management_allowed(ctx, "delete messages"):
-        return refusal
-
-    chat_id = ctx.deps.chat_id
-    client = ctx.deps.client
-
-    to_delete: list[int] = []
-
-    # Case 1: Specific message IDs provided
-    if message_ids is not None:
-        if isinstance(message_ids, int):
-            to_delete.append(message_ids)
-        elif isinstance(message_ids, list):
-            to_delete.extend(message_ids)
-
-    # Case 2: Reply message exists and no target/ids are specified
-    elif not target and ctx.deps.message.reply_to_message:
-        to_delete.append(ctx.deps.message.reply_to_message.id)
-
-    # Case 3: Target specified - delete recent messages from a target user
-    elif target:
-        target_user_id, refusal = await _resolve_moderation_target(ctx, None, target)
-        if refusal or target_user_id is None:
-            return refusal or "Could not resolve target user for deleting messages."
-
-        # Fetch recent messages and filter by sender
-        limit = max(1, min(100, count * 5))
-        async for msg in client.get_chat_history(chat_id, limit=limit):
-            if msg.from_user and msg.from_user.id == target_user_id:
-                to_delete.append(msg.id)
-            if len(to_delete) >= count:
-                break
-    # Case 4: No message_ids, target or reply - delete N recent messages in general
-    else:
-        async for msg in client.get_chat_history(chat_id, limit=count + 1):
-            if msg.id != ctx.deps.message.id:
-                to_delete.append(msg.id)
-            if len(to_delete) >= count:
-                break
-
-    if not to_delete:
-        return "No messages found to delete."
-
-    try:
-        await client.delete_messages(chat_id, to_delete)
-        # Also attempt to delete the command message itself to clean up
-        try:
-            await client.delete_messages(chat_id, ctx.deps.message.id)
-        except RPCError:
-            pass
-        return f"Successfully deleted {len(to_delete)} messages."
-    except RPCError as e:
-        logger.warning(f"Failed to delete messages in chat {chat_id}: {e}")
-        return f"Failed to delete messages: {e.__class__.__name__}. The bot may lack delete permissions."
 
 
 async def promote_user(
@@ -1098,19 +809,11 @@ async def promote_user(
     client = ctx.deps.client
     
     try:
+        chat_config = await database.get_chat_config(chat_id)
         await client.promote_chat_member(
             chat_id=chat_id,
             user_id=user_id,
-            privileges=pyrogram.types.ChatAdministratorRights(
-                can_manage_chat=True,
-                can_change_info=True,
-                can_delete_messages=True,
-                can_restrict_members=True,
-                can_invite_users=True,
-                can_pin_messages=True,
-                can_manage_video_chats=True,
-                can_manage_topics=True,
-            ),
+            privileges=_admin_rights_from_title_permissions(chat_config.title_permissions),
         )
         if title:
             # Clean/validate title
@@ -1177,16 +880,7 @@ async def demote_user(
         await client.promote_chat_member(
             chat_id=chat_id,
             user_id=user_id,
-            privileges=pyrogram.types.ChatAdministratorRights(
-                can_manage_chat=False,
-                can_change_info=False,
-                can_delete_messages=False,
-                can_restrict_members=False,
-                can_invite_users=False,
-                can_pin_messages=False,
-                can_manage_video_chats=False,
-                can_manage_topics=False,
-            ),
+            privileges=_empty_admin_rights(),
         )
     except RPCError as e:
         logger.warning(
@@ -1451,8 +1145,14 @@ async def set_chat_description(
 
 async def lock_chat(
     ctx: RunContext[datatype.ContextDeps],
+    duration_seconds: int = 0,
 ) -> str:
-    """Lock the current group chat, preventing all non-admin members from sending messages.
+    """Lock the current group chat immediately.
+
+    Args:
+        duration_seconds: Optional lock duration in seconds. Use for requests like
+            "lock chat 5 minutes". 0 means keep locked until manually unlocked.
+            Max accepted duration is 24 hours.
     """
     if refusal := await _ensure_group_management_allowed(ctx, "lock chat"):
         return refusal
@@ -1470,6 +1170,24 @@ async def lock_chat(
                 can_add_web_page_previews=False,
             )
         )
+        duration_seconds = max(0, min(int(duration_seconds or 0), 24 * 3600))
+        if duration_seconds > 0:
+            async def _unlock_later():
+                await asyncio.sleep(duration_seconds)
+                try:
+                    await client.set_chat_permissions(
+                        chat_id,
+                        ChatPermissions(
+                            can_send_messages=True,
+                            can_send_media_messages=True,
+                            can_send_other_messages=True,
+                            can_add_web_page_previews=True,
+                        ),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to auto-unlock chat {chat_id}: {e}")
+            asyncio.create_task(_unlock_later())
+            return f"Group chat has been locked for {duration_seconds} seconds."
         return "Group chat has been locked. Only administrators can send messages."
     except RPCError as e:
         logger.warning(f"Failed to lock chat {chat_id}: {e}")

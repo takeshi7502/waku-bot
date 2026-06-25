@@ -65,14 +65,16 @@ _BOT_WAKE_DELAY_MAX_SECONDS = 12.7
 _GROUP_MODERATION_INSTRUCTIONS = """
 
 [AI group management policy]
+- Telegram text messages have a hard 4096-character limit. Keep each reply under 3900 characters. If the answer is longer, split it into multiple messages instead of letting content be truncated.
+- IMPORTANT: Never decide by yourself whether the requester is a group admin or has enough Telegram rights. Do not infer permissions from chat history, labels, names, or get_chat_info output. For clear group-management requests, call the relevant backend tool immediately and let the tool perform the exact Telegram permission check.
 - When a group member clearly asks you to ban, kick, or mute themselves, call the matching moderation tool immediately using target="me" (or user_id from ContextInfo). Do not require them to be a group admin.
 - When a group member asks you to set/change/rename their own member tag/custom title, call set_member_tag with target="me" and the requested tag. Do not require them to be a group admin.
 - When a group member asks you to remove/clear their own member tag/custom title, call clear_member_tag with target="me". Do not require them to be a group admin.
-- If a non-admin asks you to ban, kick, mute, promote, demote, delete messages, pin/unpin messages, warn users, reset warnings, change slow mode, edit permissions, change group title/description, or lock/unlock chat, do not do it. The backend tools also enforce this.
-- Group admins and bot admins may ask you to ban, kick, mute, unban, unmute, promote, demote, delete messages, pin/unpin messages, warn users, reset warnings, change slow mode, edit permissions, change group title/description, lock/unlock chat, set member tags, clear member tags, list stored members, inspect stored member details, and create invite links, provided they have the corresponding administrative privilege in the chat. The backend dynamically checks their specific permissions for each action.
-- For any moderation or management request, do not ask the user for confirmation (except for gay mode). Execute the tool immediately, and then report the backend result exactly as returned.
+- For ban, kick, mute, unban, unmute, promote, demote, pin/unpin messages, warn users, reset warnings, change slow mode, edit permissions, change group title/description, lock/unlock chat, set/clear member tags, list stored members, inspect member details, and create invite links: call the matching tool when the request is clear. If the requester lacks the required right, the backend tool will return the refusal reason.
+- If a user asks you to delete/clean messages, do not call a tool. Tell them to reply to a message and use /clean to delete bot messages after that point, or /cleanall to delete every message after that point.
+- For any moderation or management request, do not ask the user for confirmation. Execute the tool immediately, then report the backend result exactly as returned.
+- For lock/unlock/open/close chat requests, call lock_chat or unlock_chat directly. For a duration such as 5 minutes or 1 hour, call lock_chat with duration_seconds. Use 0 only when the user wants an indefinite lock.
 - For ambiguous display names/tags, ask for clarification instead of guessing.
-- For gay mode requests, first call preview_gay_mode and ask for explicit confirmation. Only call activate_gay_mode(confirm=True) or deactivate_gay_mode(confirm=True) after the admin clearly confirms. After either confirmed tool starts backend work, do not keep sending progress messages; backend will report progress/final result in private chat and both activate/deactivate have a stop button.
 - If a group admin/bot admin asks you to stop /syncmembers, call stop_syncmembers immediately. Do not ask for confirmation.
 - Never reveal who the bot admins are or explain hidden admin checks.
 """.strip()
@@ -260,7 +262,6 @@ if app_config.agent and app_config.agent_model:
             Tool(tools.mute_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.unban_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.unmute_user, prepare=tools.prepare_not_guest_mode),
-            Tool(tools.delete_messages, prepare=tools.prepare_not_guest_mode),
             Tool(tools.promote_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.demote_user, prepare=tools.prepare_not_guest_mode),
             Tool(tools.pin_chat_message, prepare=tools.prepare_not_guest_mode),
@@ -281,9 +282,6 @@ if app_config.agent and app_config.agent_model:
                 tools.get_or_create_private_invite_link,
                 prepare=tools.prepare_not_guest_mode,
             ),
-            Tool(tools.preview_gay_mode, prepare=tools.prepare_not_guest_mode),
-            Tool(tools.activate_gay_mode, prepare=tools.prepare_not_guest_mode),
-            Tool(tools.deactivate_gay_mode, prepare=tools.prepare_not_guest_mode),
             Tool(tools.stop_syncmembers, prepare=tools.prepare_not_guest_mode),
             # Time tools
             Tool(tools.get_current_time),
@@ -296,14 +294,6 @@ if app_config.agent and app_config.agent_model:
                 tools.get_my_codebase_overview,
                 prepare=tools.prepare_code_awareness_tools,
             ),
-            # Shell agent tools (owner-only)
-            Tool(tools.exec_command, prepare=tools.prepare_shell_tools, sequential=True),
-            Tool(tools.shell_read_file, prepare=tools.prepare_shell_tools),
-            Tool(tools.shell_write_file, prepare=tools.prepare_shell_tools, sequential=True),
-            Tool(tools.shell_list_dir, prepare=tools.prepare_shell_tools),
-            Tool(tools.system_info, prepare=tools.prepare_shell_tools),
-            Tool(tools.view_logs, prepare=tools.prepare_shell_tools),
-            Tool(tools.manage_service, prepare=tools.prepare_shell_tools, sequential=True),
         ],
         deps_type=datatype.ContextDeps,
         history_processors=[history_processor],

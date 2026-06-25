@@ -149,6 +149,8 @@ async def init_bot(client: Client = client):
         BotCommand("botdemote", i18n.t("bot.cmd.botdemote", locale=app_config.lang)),
         BotCommand("config", i18n.t("bot.cmd.config", locale=app_config.lang)),
         BotCommand("greet", i18n.t("bot.cmd.greet", locale=app_config.lang)),
+        BotCommand("clean", "Xoá tin nhắn bot sau mốc reply"),
+        BotCommand("cleanall", "Xoá mọi tin nhắn sau mốc reply"),
     ]
     private_commands = [
         BotCommand("buygift", i18n.t("bot.cmd.buygift", locale=app_config.lang)),

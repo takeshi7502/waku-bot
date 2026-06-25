@@ -197,12 +197,6 @@ class _AppConfig(pydantic.BaseModel):
     # Custom file patterns to exclude from code repository (in addition to default security exclusions)
     # Example: ["*.md", "docs/**/*", "tests/**/*"]
     agent_code_exclude_patterns: list[str] = []
-    # Shell agent: allow bot owner to execute commands on VPS via chat
-    agent_shell_enabled: bool = False
-    agent_shell_timeout: int = 30  # max seconds per command
-    agent_shell_blocked_commands: list[str] = []  # extra commands to block (added to built-in list)
-    agent_shell_max_output_length: int = 8000  # max chars in tool output
-    agent_shell_working_dir: str = ""  # default working directory, empty = home dir
 
     # experimental, maybe removed in the future
     agent_whitelist_mode: bool = False

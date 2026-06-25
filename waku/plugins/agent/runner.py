@@ -438,9 +438,7 @@ async def run_agent(
             )
     except Exception as e:
         logger.error(f"Agent run error: {e.__class__.__name__} - {e}")
-        err_text = i18n.t("bot.msg.agent.errors.interrupted", locale=lang).format(
-            error=f"{e.__class__.__name__}"
-        )
+        err_text = "Mình chưa thực hiện được yêu cầu này do thao tác backend bị Telegram hoặc hệ thống từ chối. Thử cách khác giúp mình nha."
         if is_guest_mode:
             await reply_output(client, message, err_text, deps=deps)
         else:

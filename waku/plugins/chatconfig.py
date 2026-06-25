@@ -108,14 +108,6 @@ class ChatConfigMarkup:
                 ],
                 [
                     InlineKeyboardButton(
-                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.agent_automod_enabled', locale=self.lang), self.chat_config.agent_automod_enabled)}",
-                        callback_data=self.get_callback_data(
-                            "agent_automod_enabled"
-                        ),
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
                         i18n.t("bot.button.chat_config.save", locale=self.lang),
                         callback_data="config_chat save",
                     ),
@@ -203,10 +195,6 @@ async def config_chat(
             case "agent_group_manage_enabled":
                 chat_config.agent_group_manage_enabled = (
                     not chat_config.agent_group_manage_enabled
-                )
-            case "agent_automod_enabled":
-                chat_config.agent_automod_enabled = (
-                    not chat_config.agent_automod_enabled
                 )
             case _:
                 await callback_query.answer(

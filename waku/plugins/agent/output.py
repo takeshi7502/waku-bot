@@ -15,6 +15,32 @@ from waku.plugins.agent.styling import convert_md
 
 _MD_SEPARATOR_RE = re.compile(r"^(?:[-*_][ \t]*){3,}$")
 
+TELEGRAM_SAFE_MESSAGE_LENGTH = 3900
+
+
+def _split_text_for_telegram(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LENGTH) -> list[str]:
+    """Split text into Telegram-safe chunks without silently truncating output."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        split_at = remaining.rfind("\n\n", 0, limit)
+        if split_at < limit // 2:
+            split_at = remaining.rfind("\n", 0, limit)
+        if split_at < limit // 2:
+            split_at = remaining.rfind(" ", 0, limit)
+        if split_at < limit // 2:
+            split_at = limit
+        chunk = remaining[:split_at].strip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
 
 def _is_markdown_separator_only_chunk(chunk: str) -> bool:
     lines = [line.strip() for line in chunk.splitlines() if line.strip()]
@@ -36,6 +62,7 @@ async def reply_output(
         pyrogram.enums.ChatType.GROUP,
     )
     user = message.sender_chat or message.from_user
+    safe_text_chunks = _split_text_for_telegram(text)
     lines = [line for line in text.split("\n\n") if line.strip()]
     if not lines:
         return
@@ -66,14 +93,18 @@ async def reply_output(
     try:
         last_reply_msg: pyrogram.types.Message | None = None
         if has_block:
-            try:
-                last_reply_msg = await message.reply_text(
-                    total_plain, entities=total_entities
-                )
-            except Exception as e:
-                logger.warning(f"Send failed: {e.__class__.__name__} - {e}")
-                last_reply_msg = await message.reply_text(total_plain)
+            for raw_chunk in safe_text_chunks:
+                plain_chunk, entities = convert_md(raw_chunk)
+                try:
+                    last_reply_msg = await message.reply_text(
+                        plain_chunk, entities=entities
+                    )
+                except Exception as e:
+                    logger.warning(f"Send failed: {e.__class__.__name__} - {e}")
+                    last_reply_msg = await message.reply_text(plain_chunk)
+                await asyncio.sleep(random.uniform(0.3, 1.2) + len(raw_chunk) / 1000)
         else:
+            chunks = [part for chunk in chunks for part in _split_text_for_telegram(chunk)]
             for chunk in chunks:
                 # 如果只有分隔符, 则跳过
                 if _is_markdown_separator_only_chunk(chunk):
@@ -179,7 +210,7 @@ class TypingKeepAlive:
 
 class StreamingOutput:
     STREAM_EDIT_INTERVAL = 1.5
-    MAX_MESSAGE_LENGTH = 4000
+    MAX_MESSAGE_LENGTH = TELEGRAM_SAFE_MESSAGE_LENGTH
     MAX_EDIT_COUNT = 20
     MAX_TOTAL_TIME = 120.0
 

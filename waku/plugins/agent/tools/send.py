@@ -789,7 +789,7 @@ async def _send_anime_photo_guest(
 async def send_anime_photo(
     ctx: RunContext[datatype.ContextDeps], keyword: str = ""
 ) -> AnimePhotoResult:
-    """Get and send anime photos (or called it setu/涩图).
+    """Get and send anime photos via the /seg-style anime image feature.
 
     Args:
         keyword: Optional keyword to search for specific anime photos.

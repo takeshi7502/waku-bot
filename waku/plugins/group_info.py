@@ -2,7 +2,7 @@ import html
 import math
 
 import pyrogram
-from pyrogram.errors import BotMethodInvalid, MessageNotModified
+from pyrogram.errors import BotMethodInvalid, MessageNotModified, RPCError
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from waku import database
@@ -29,6 +29,41 @@ def _format_group_line(index: int, chat) -> str:
         f"   🆔 <code>{chat.id}</code>\n"
         f"   🔗 {html.escape(username)}"
     )
+
+
+
+
+async def _filter_accessible_groups(client: pyrogram.Client, groups) -> tuple[list, int]:
+    """Return only real Telegram groups the bot can still access."""
+    visible = []
+    hidden = 0
+    me = None
+    try:
+        me = await client.get_me()
+    except Exception:
+        pass
+    for chat in groups:
+        try:
+            live_chat = await client.get_chat(chat.id)
+            if live_chat.type not in {
+                pyrogram.enums.ChatType.GROUP,
+                pyrogram.enums.ChatType.SUPERGROUP,
+            }:
+                hidden += 1
+                continue
+            if me is not None:
+                try:
+                    await client.get_chat_member(live_chat.id, me.id)
+                except RPCError:
+                    hidden += 1
+                    continue
+            await database.upsert_chat(live_chat)
+            visible.append(live_chat)
+        except RPCError:
+            hidden += 1
+        except Exception:
+            hidden += 1
+    return visible, hidden
 
 
 async def _refresh_known_groups(client: pyrogram.Client) -> tuple[int, str | None]:
@@ -111,26 +146,31 @@ async def info_command(client: pyrogram.Client, message: pyrogram.types.Message)
         )
         return
 
-    refresh_requested = len(message.command or []) > 1 and message.command[1].lower() == "rf"
+    status_msg = await message.reply_text(
+        "🔎 Đang kiểm tra danh sách group...",
+        quote=False,
+    )
     status_lines: list[str] = []
-    if refresh_requested:
-        refreshed, warning = await _refresh_known_groups(client)
-        if warning:
-            status_lines.append(f"⚠️ <b>Refresh giới hạn</b>: {html.escape(warning)}")
-        else:
-            status_lines.append(f"✅ <b>Đã refresh</b>: cập nhật {refreshed} group.")
 
     groups = await database.list_known_telegram_groups(limit=500)
+    groups, hidden = await _filter_accessible_groups(client, groups)
+    if hidden:
+        status_lines.append(f"ℹ️ <b>Đã ẩn</b>: {hidden} group không còn truy cập được hoặc không phải group.")
     if not groups:
         body = "📚 <b>Telegram Groups</b>\n\nChưa có group Telegram nào trong DB."
-        await message.reply_text(
+        await status_msg.edit_text(
             "\n\n".join(status_lines + [body]) if status_lines else body,
             parse_mode=pyrogram.enums.ParseMode.HTML,
-            quote=False,
         )
         return
 
-    await _reply_info_page(message, groups, status_lines=status_lines)
+    text, markup = _render_info_page(groups, 0, status_lines)
+    await status_msg.edit_text(
+        text,
+        parse_mode=pyrogram.enums.ParseMode.HTML,
+        disable_web_page_preview=True,
+        reply_markup=markup,
+    )
 
 
 @pyrogram.Client.on_callback_query(pyrogram.filters.regex(rf"^{_CALLBACK_PREFIX}:"))

@@ -212,9 +212,7 @@ async def can_user_manage_bot_in_chat(
     if db_user.is_bot_global_admin:
         return True
     association = await database.get_association(user_id, chat_id)
-    if association is None:
-        return False
-    if association.is_bot_admin:
+    if association is not None and association.is_bot_admin:
         return True
     cache_key = f"can_manage_bot:{user_id}:{chat_id}"
     if action:
@@ -223,8 +221,9 @@ async def can_user_manage_bot_in_chat(
         return True
     chat_member = await client.get_chat_member(chat_id, user_id)
     if chat_member.status == ChatMemberStatus.OWNER:
-        association.is_bot_admin = True
-        await database.update_association(association)
+        if association is not None:
+            association.is_bot_admin = True
+            await database.update_association(association)
         return True
     if chat_member.status == ChatMemberStatus.ADMINISTRATOR:
         if chat_member.privileges is not None:

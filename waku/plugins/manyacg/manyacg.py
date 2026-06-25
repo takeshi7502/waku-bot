@@ -144,7 +144,7 @@ async def parse_artwork(client: PyrogramClient, message: pyrogram.types.Message)
 
 
 @PyrogramClient.on_message(pyrogram.filters.command("seg"), group=0)
-async def setu_command(client: PyrogramClient, message: pyrogram.types.Message):
+async def seg_command(client: PyrogramClient, message: pyrogram.types.Message):
     if not manyacg_client:
         return
     chat = message.chat
@@ -209,7 +209,7 @@ async def setu_command(client: PyrogramClient, message: pyrogram.types.Message):
             has_spoiler=artwork.r18,
         )
     except Exception as e:
-        logger.error(f"setu_command error: {e.__class__.__name__}:{e}")
+        logger.error(f"seg_command error: {e.__class__.__name__}:{e}")
         await message.reply(
             i18n.t("bot.msg.manyacg.setu_error", locale=lang),
         )
