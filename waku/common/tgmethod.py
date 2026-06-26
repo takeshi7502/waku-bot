@@ -172,6 +172,8 @@ def get_required_privilege(action: str | None) -> str:
         return "can_restrict_members"
     if action in {"promote", "demote"}:
         return "can_promote_members"
+    if action in {"add member", "invite member", "add user", "invite user", "add bot", "invite bot"}:
+        return "can_invite_users"
     if action in {"set tag", "clear tag"}:
         return "can_manage_tags"
     if action in {"delete messages", "delete message"}:

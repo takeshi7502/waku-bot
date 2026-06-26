@@ -131,18 +131,22 @@ def _admin_rights_from_title_permissions(permissions: dict | str | None) -> pyro
 
 def _empty_admin_rights() -> pyrogram.types.ChatAdministratorRights:
     return pyrogram.types.ChatAdministratorRights(
+        is_anonymous=False,
         can_manage_chat=False,
-        can_change_info=False,
         can_delete_messages=False,
+        can_manage_video_chats=False,
         can_restrict_members=False,
+        can_promote_members=False,
+        can_change_info=False,
         can_invite_users=False,
-        can_pin_messages=False,
         can_post_stories=False,
         can_edit_stories=False,
         can_delete_stories=False,
-        can_manage_video_chats=False,
-        can_promote_members=False,
+        can_post_messages=False,
+        can_edit_messages=False,
+        can_pin_messages=False,
         can_manage_topics=False,
+        can_manage_direct_messages=False,
         can_manage_tags=False,
     )
 
@@ -230,7 +234,7 @@ async def _get_checked_target_member(
         user_id, chat_id
     )
     if action in harmful_actions and target_is_protected_bot_admin:
-        return None, f"Cannot {action} bot admin or owner."
+        return None, f"Refusing to {action} a protected administrator."
     if member.status == ChatMemberStatus.OWNER:
         return None, f"Refusing to {action} the group owner."
     if member.status == ChatMemberStatus.ADMINISTRATOR and action in harmful_actions:
@@ -773,6 +777,35 @@ async def get_or_create_private_invite_link(ctx: RunContext[datatype.ContextDeps
             return f"Failed to create invite link: {e.__class__.__name__}. The bot may lack invite permissions."
 
 
+async def add_group_member(
+    ctx: RunContext[datatype.ContextDeps],
+    target: str,
+) -> str:
+    """Add/invite a Telegram user or bot to the current group immediately.
+
+    Args:
+        target: @username, t.me username link, tg://user?id=..., numeric user ID,
+            or a stored display name/member tag. For requests like "add @waku to
+            the group", pass target="@waku".
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "add member"):
+        return refusal
+    user_id, refusal = await _resolve_moderation_target(ctx, None, target)
+    if refusal or user_id is None:
+        return refusal or "Cannot resolve target user to add."
+    try:
+        failed = await ctx.deps.client.add_chat_members(ctx.deps.chat_id, user_id)
+        if failed:
+            return f"Could not add user {user_id}. Telegram refused the invite or the user cannot be added right now."
+        return f"User {user_id} has been added/invited to this group."
+    except RPCError as e:
+        logger.warning(
+            f"Failed to add member {user_id} to chat {ctx.deps.chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+        return f"Could not add user {user_id}. Telegram may require them to allow group invites or the bot may lack invite permissions."
+
+
 async def stop_syncmembers(ctx: RunContext[datatype.ContextDeps]) -> str:
     """Stop a running /syncmembers job in this group immediately. Bot admins only; no confirmation needed."""
     if refusal := await _ensure_true_bot_admin_access(ctx, "stop syncmembers"):
@@ -874,7 +907,7 @@ async def demote_user(
     if member.status != ChatMemberStatus.ADMINISTRATOR:
         return "User is not an administrator of this group."
     if await _is_protected_bot_admin_or_owner(user_id, chat_id):
-        return "Cannot demote bot admin or owner."
+        return "Refusing to demote a protected administrator."
 
     try:
         await client.promote_chat_member(

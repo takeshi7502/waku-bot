@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic_ai import RunContext
 
+from waku.config import app_config
+
 from .. import datatype
 
 
@@ -25,6 +27,7 @@ async def get_current_time(
     timezone_name: Literal[
         "local",
         "UTC",
+        "Asia/Ho_Chi_Minh",
         "Asia/Shanghai",
         "Asia/Tokyo",
         "America/New_York",
@@ -40,6 +43,7 @@ async def get_current_time(
         timezone_name: 时区选择
             - "local": 系统本地时间
             - "UTC": 协调世界时
+            - "Asia/Ho_Chi_Minh": Việt Nam (UTC+7)
             - "Asia/Shanghai": 中国标准时间 (UTC+8)
             - "Asia/Tokyo": 日本标准时间 (UTC+9)
             - "America/New_York": 美国东部时间
@@ -63,20 +67,18 @@ async def get_current_time(
             target_time = utc_now
             tz_info = UTC
         elif timezone_name == "local":
-            # 使用系统本地时区
-            target_time = datetime.now()
-            tz_info = target_time.astimezone().tzinfo
-            target_time = target_time.replace(tzinfo=tz_info)
+            # Use configured runtime timezone (defaults to Asia/Ho_Chi_Minh)
+            tz_info = ZoneInfo(app_config.timezone)
+            target_time = utc_now.astimezone(tz_info)
         else:
             # 使用指定的时区
             if timezone_name in available_timezones():
                 tz_info = ZoneInfo(timezone_name)
                 target_time = utc_now.astimezone(tz_info)
             else:
-                # 如果时区不可用，回退到本地时间
-                target_time = datetime.now()
-                tz_info = target_time.astimezone().tzinfo
-                target_time = target_time.replace(tzinfo=tz_info)
+                # 如果时区不可用，回退到配置的本地时间
+                tz_info = ZoneInfo(app_config.timezone)
+                target_time = utc_now.astimezone(tz_info)
 
         # 生成 ISO 格式
         iso_str = target_time.isoformat()

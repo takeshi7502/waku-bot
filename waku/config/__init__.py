@@ -27,6 +27,7 @@ class _AppConfig(pydantic.BaseModel):
     # If not set, uses db_url with async driver replaced by sync driver
     # Allows separating job storage from main database
     jobstore_db_url: str | None = None
+    timezone: str = "Asia/Ho_Chi_Minh"
     pg_pgroonga: bool = False
     session_name: str = "waku"
     api_id: int = 1025907

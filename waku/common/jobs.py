@@ -1,6 +1,7 @@
 import datetime
 from collections.abc import Callable
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.job import Job
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -10,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from waku.config import app_config
 from waku.database.db import sync_engine
 from waku.logger import logger
 
@@ -216,7 +218,7 @@ class _TaskScheduler:
         hour: int | str = 0,
         minute: int | str = 0,
         second: int | str = 0,
-        timezone: datetime.tzinfo = datetime.timezone(datetime.timedelta(hours=8)),
+        timezone: datetime.tzinfo | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
         args: list | None = None,
@@ -241,6 +243,15 @@ class _TaskScheduler:
         Returns:
             APScheduler Job 实例
         """
+        if timezone is None:
+            try:
+                timezone = ZoneInfo(app_config.timezone)
+            except ZoneInfoNotFoundError:
+                logger.warning(
+                    f"Invalid timezone '{app_config.timezone}', falling back to Asia/Ho_Chi_Minh"
+                )
+                timezone = ZoneInfo("Asia/Ho_Chi_Minh")
+
         trigger = CronTrigger(
             hour=hour,
             minute=minute,

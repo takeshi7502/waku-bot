@@ -1,6 +1,7 @@
 import asyncio
 import mimetypes
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from io import BytesIO
 from typing import Any
 
@@ -590,7 +591,7 @@ async def build_ctx_info(
         if message.chat and message.chat.type
         else None,
         msg_id=message.id,
-        current_time=datetime.now().isoformat(),
+        current_time=datetime.now(ZoneInfo(app_config.timezone)).isoformat(),
         is_group_chat=is_group_chat,
     )
     if is_explicit_reply(message) and message.reply_to_message:

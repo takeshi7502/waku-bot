@@ -8,6 +8,7 @@ use_ipv6 = false
 log_retention_days = 30
 log_level = "INFO" # INFO for release or DEBUG
 lang = "vi-VN"
+timezone = "Asia/Ho_Chi_Minh"
 bot_keywords = ["waku"]
 health_check_enabled = true
 

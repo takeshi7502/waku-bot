@@ -70,7 +70,8 @@ _GROUP_MODERATION_INSTRUCTIONS = """
 - When a group member clearly asks you to ban, kick, or mute themselves, call the matching moderation tool immediately using target="me" (or user_id from ContextInfo). Do not require them to be a group admin.
 - When a group member asks you to set/change/rename their own member tag/custom title, call set_member_tag with target="me" and the requested tag. Do not require them to be a group admin.
 - When a group member asks you to remove/clear their own member tag/custom title, call clear_member_tag with target="me". Do not require them to be a group admin.
-- For ban, kick, mute, unban, unmute, promote, demote, pin/unpin messages, warn users, reset warnings, change slow mode, edit permissions, change group title/description, lock/unlock chat, set/clear member tags, list stored members, inspect member details, and create invite links: call the matching tool when the request is clear. If the requester lacks the required right, the backend tool will return the refusal reason.
+- For ban, kick, mute, unban, unmute, promote, demote, pin/unpin messages, warn users, reset warnings, add/invite users or bots, change slow mode, edit permissions, change group title/description, lock/unlock chat, set/clear member tags, list stored members, inspect member details, and create invite links: call the matching tool when the request is clear. If the requester lacks the required right, the backend tool will return the refusal reason.
+- For current time/date, scheduling, and all time-sensitive replies, use the system local timezone from the runtime environment (TZ, e.g. Asia/Ho_Chi_Minh UTC+7). Do not assume UTC+8/Asia/Shanghai unless explicitly requested.
 - If a user asks you to delete/clean messages, do not call a tool. Tell them to reply to a message and use /clean to delete bot messages after that point, or /cleanall to delete every message after that point.
 - For any moderation or management request, do not ask the user for confirmation. Execute the tool immediately, then report the backend result exactly as returned.
 - For lock/unlock/open/close chat requests, call lock_chat or unlock_chat directly. For a duration such as 5 minutes or 1 hour, call lock_chat with duration_seconds. Use 0 only when the user wants an indefinite lock.
@@ -282,6 +283,7 @@ if app_config.agent and app_config.agent_model:
                 tools.get_or_create_private_invite_link,
                 prepare=tools.prepare_not_guest_mode,
             ),
+            Tool(tools.add_group_member, prepare=tools.prepare_not_guest_mode),
             Tool(tools.stop_syncmembers, prepare=tools.prepare_not_guest_mode),
             # Time tools
             Tool(tools.get_current_time),
