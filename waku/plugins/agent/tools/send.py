@@ -56,6 +56,8 @@ _SCHEDULE_PREFIXES = {
     "agent_schedule_media": "media",
     "agent_send_poll": "poll",
 }
+_NON_ADMIN_MAX_SCHEDULED_JOBS = 10
+_NON_ADMIN_MIN_SCHEDULE_GAP = datetime.timedelta(minutes=5)
 
 
 def _clean_job_id(job_id: str) -> str:
@@ -110,6 +112,44 @@ def _scheduled_agent_jobs(chat_id: int, user_id: int | None = None) -> list[_Sch
 def _format_scheduled_job(job: _ScheduledAgentJob, index: int) -> str:
     when = job.run_time.isoformat() if job.run_time else "unknown time"
     return f"{index}. [{job.kind}] {when} - {job.summary} - id={job.job_id}"
+
+
+async def _is_schedule_limit_exempt(ctx: RunContext[datatype.ContextDeps]) -> bool:
+    """Only configured bot owners are exempt from Telegram schedule limits."""
+    return ctx.deps.user_id in app_config.owners
+
+
+def _as_utc(dt: datetime.datetime) -> datetime.datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.UTC)
+    return dt.astimezone(datetime.UTC)
+
+
+async def _validate_non_admin_schedule_limits(
+    ctx: RunContext[datatype.ContextDeps],
+    schedule_datetime: datetime.datetime,
+) -> None:
+    if await _is_schedule_limit_exempt(ctx):
+        return
+
+    if ctx.deps.chat_id is None:
+        raise ModelRetry("Message context is unavailable.")
+
+    requested_time = _as_utc(schedule_datetime)
+    now = datetime.datetime.now(datetime.UTC)
+    if requested_time - now < _NON_ADMIN_MIN_SCHEDULE_GAP:
+        raise ModelRetry("Schedule is limited to a minimum delay of 5 minutes.")
+
+    existing_jobs = _scheduled_agent_jobs(ctx.deps.chat_id, user_id=ctx.deps.user_id)
+    if len(existing_jobs) >= _NON_ADMIN_MAX_SCHEDULED_JOBS:
+        raise ModelRetry("Schedule limit reached: maximum 10 pending schedules per chat.")
+
+    for job in existing_jobs:
+        if job.run_time is None:
+            continue
+        gap = abs(requested_time - _as_utc(job.run_time))
+        if gap < _NON_ADMIN_MIN_SCHEDULE_GAP:
+            raise ModelRetry("Schedule interval is limited to a minimum gap of 5 minutes.")
 
 
 # Module-level job functions for APScheduler persistence
@@ -316,6 +356,7 @@ async def schedule_message(
         # Schedule for later delivery
         # At this point schedule_datetime must be set (validated above)
         assert schedule_datetime is not None
+        await _validate_non_admin_schedule_limits(ctx, schedule_datetime)
 
         if has_text:
             # Schedule text message using module-level function
@@ -536,6 +577,8 @@ async def _schedule_poll(
     schedule_datetime: datetime.datetime,
     chat_id: int,
 ) -> None:
+    await _validate_non_admin_schedule_limits(ctx, schedule_datetime)
+
     job_key = (
         f"agent_send_poll:{chat_id}:{ctx.deps.user_id}"
         f":{schedule_datetime.timestamp()}"
