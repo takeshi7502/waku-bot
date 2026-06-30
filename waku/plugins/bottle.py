@@ -1,4 +1,8 @@
-﻿from pyrogram import enums, filters, types
+import struct
+import zlib
+from io import BytesIO
+
+from pyrogram import enums, filters, types
 from pyrogram.client import Client
 
 from waku import common, database, i18n
@@ -11,6 +15,38 @@ _BOTTLE_MSG_PREFIX = "bottle_msg:"
 _REPLY_INTENT_PREFIX = "bottle_reply_intent:"
 _REPLY_COOLDOWN_PREFIX = "bottle_reply_cooldown:"
 _BOTTLE_BAN_PREFIX = "bottle_ban:"
+
+# Telegram cannot delete inline messages sent via @bot, so we swap the media out
+# with a neutral dark PNG that does not show the original bottle media anymore.
+def _make_inline_bottle_removed_png() -> bytes:
+    width = 64
+    height = 64
+    row = b"\x00" + (b"\x18\x24\x33" * width)
+    raw = row * height
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk("IHDR".encode(), struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk("IDAT".encode(), zlib.compress(raw, level=9))
+        + chunk("IEND".encode(), b"")
+    )
+
+
+_INLINE_BOTTLE_REMOVED_PNG = _make_inline_bottle_removed_png()
+
+
+def _inline_bottle_removed_media(caption: str) -> types.InputMediaPhoto:
+    media = BytesIO(_INLINE_BOTTLE_REMOVED_PNG)
+    media.name = "bottle_removed.png"
+    return types.InputMediaPhoto(media=media, caption=caption)
 
 
 async def _bottle_reply_filter(_, client: Client, message: types.Message) -> bool:
@@ -303,14 +339,13 @@ async def handle_throw_back_callback(
         )
         return
     if callback_query.message is None:
-        if callback_query.inline_message_id is not None:
-            await callback_query.edit_message_text(
-                i18n.t("bot.msg.bottle.throw_back_success", locale=lang)
+        success_text = i18n.t("bot.msg.bottle.throw_back_success", locale=lang)
+        try:
+            await callback_query.edit_message_media(
+                _inline_bottle_removed_media(success_text)
             )
-            return
-        await callback_query.answer(
-            i18n.t("bot.msg.bottle.throw_back_success", locale=lang)
-        )
+        except Exception:
+            await callback_query.edit_message_text(success_text)
         return
     if callback_query.message.media:
         await callback_query.answer(
@@ -345,8 +380,6 @@ async def handle_report_bottle_callback(
             cache_time=10,
         )
         logger.exception(f"Failed to report bottle: {e}")
-        return
-    if callback_query.message is None:
         return
     await callback_query.answer(
         i18n.t("bot.msg.bottle.report_success", locale=lang), cache_time=3000
@@ -385,9 +418,13 @@ async def handle_destroy_bottle_callback(
         logger.exception(f"Failed to delete bottle: {e}")
         return
     if callback_query.message is None:
-        await callback_query.edit_message_text(
-            i18n.t("bot.msg.bottle.destroy_success", locale=lang)
-        )
+        success_text = i18n.t("bot.msg.bottle.destroy_success", locale=lang)
+        try:
+            await callback_query.edit_message_media(
+                _inline_bottle_removed_media(success_text)
+            )
+        except Exception:
+            await callback_query.edit_message_text(success_text)
         return
     await callback_query.answer(i18n.t("bot.msg.bottle.destroy_success", locale=lang))
     await callback_query.message.delete()

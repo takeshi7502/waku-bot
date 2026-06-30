@@ -1,4 +1,6 @@
-﻿import asyncio
+import asyncio
+import html
+import random
 from io import BytesIO
 
 from pyrogram import enums, types
@@ -6,8 +8,10 @@ from pyrogram.client import Client
 
 from waku import database, i18n
 from waku.common.memory_store import memttlcache
+from waku.config import app_config
 from waku.logger import logger
 from waku.plugins.inlinequery.manomeme import handle_manomeme
+from waku.services.manyacg import manyacg_client
 
 from . import hack, manomeme
 from .quote import query_quote
@@ -20,6 +24,186 @@ async def inline_query_handler(client: Client, query: types.InlineQuery):
     datas = query.query.strip().split(" ")
     if not datas or datas[0] == "":
         results: list[types.InlineQueryResult] = []
+        if manyacg_client:
+            try:
+                resp = await manyacg_client.random_artwork(limit=1, r18=2)
+                if resp.status == 200 and resp.data and resp.data[0].pictures:
+                    artwork = resp.data[0]
+                    picture = artwork.pictures[
+                        random.randint(0, len(artwork.pictures) - 1)
+                    ]
+                    results.append(
+                        types.InlineQueryResultPhoto(
+                            id=f"seg_{picture.id}",
+                            photo_url=picture.regular,
+                            thumb_url=picture.regular,
+                            title="Seg free",
+                            description="Gửi một ảnh anime/Pixiv ngẫu nhiên",
+                            caption=f"<a href='{artwork.source_url}'>{html.escape(artwork.title)}</a>",
+                            parse_mode=enums.ParseMode.HTML,
+                            reply_markup=types.InlineKeyboardMarkup(
+                                [
+                                    [
+                                        types.InlineKeyboardButton(
+                                            text=i18n.t(
+                                                "bot.button.manyacg.detail",
+                                                locale=user_config.lang,
+                                            ),
+                                            url=artwork.source_url,
+                                        ),
+                                        types.InlineKeyboardButton(
+                                            text=i18n.t(
+                                                "bot.button.manyacg.original",
+                                                locale=user_config.lang,
+                                            ),
+                                            url=f"https://t.me/{app_config.manyacg_bot}/?start=file_{picture.id}",
+                                        ),
+                                    ]
+                                ]
+                            ),
+                        )
+                    )
+            except Exception as e:
+                logger.error(f"inline seg query error: {e.__class__.__name__}:{e}")
+        bottle = await database.pick_random_bottle()
+        if bottle is not None:
+            bottle_text = bottle.text or ""
+            bottle_description = (
+                bottle_text[:80]
+                if bottle_text
+                else i18n.t("bot.inline.pick_bottle_description", locale=user_config.lang)
+            )
+            db_user = await database.get_user_by_id(user.id)
+            bot_username = client.me.username if client.me else None
+            row1 = [
+                types.InlineKeyboardButton(
+                    i18n.t("bot.button.bottle.throw_back", locale=user_config.lang),
+                    callback_data=f"throw_back {user.id}",
+                ),
+            ]
+            if db_user is not None and db_user.id == bottle.sender_id:
+                row1.append(
+                    types.InlineKeyboardButton(
+                        i18n.t("bot.button.bottle.destroy", locale=user_config.lang),
+                        callback_data=f"destroy_bottle {bottle.id} {user.id}",
+                    )
+                )
+            else:
+                row1.append(
+                    types.InlineKeyboardButton(
+                        i18n.t("bot.button.bottle.reply", locale=user_config.lang),
+                        callback_data=f"reply_bottle_menu {bottle.id} {user.id}",
+                    )
+                )
+            bottle_markup = types.InlineKeyboardMarkup(
+                [
+                    row1,
+                    [
+                        types.InlineKeyboardButton(
+                            i18n.t("bot.button.bottle.report", locale=user_config.lang),
+                            callback_data=f"report_bottle {bottle.id}",
+                        ),
+                        types.InlineKeyboardButton(
+                            i18n.t("bot.button.bottle.seek", locale=user_config.lang),
+                            url=f"https://t.me/{bot_username}?start=seek_bottle_{bottle.id}",
+                        ),
+                    ],
+                ]
+            )
+            match bottle.media_type:
+                case enums.MessageMediaType.PHOTO.name if bottle.file_id:
+                    results.append(
+                        types.InlineQueryResultCachedPhoto(
+                            photo_file_id=bottle.file_id,
+                            id=f"pick_bottle_{bottle.id}",
+                            title=i18n.t(
+                                "bot.inline.pick_bottle_title", locale=user_config.lang
+                            ),
+                            description=bottle_description,
+                            caption=bottle_text,
+                            reply_markup=bottle_markup,
+                        )
+                    )
+                case enums.MessageMediaType.VIDEO.name if bottle.file_id:
+                    results.append(
+                        types.InlineQueryResultCachedVideo(
+                            video_file_id=bottle.file_id,
+                            title=i18n.t(
+                                "bot.inline.pick_bottle_title", locale=user_config.lang
+                            ),
+                            id=f"pick_bottle_{bottle.id}",
+                            description=bottle_description,
+                            caption=bottle_text,
+                            reply_markup=bottle_markup,
+                        )
+                    )
+                case enums.MessageMediaType.AUDIO.name if bottle.file_id:
+                    results.append(
+                        types.InlineQueryResultCachedAudio(
+                            audio_file_id=bottle.file_id,
+                            id=f"pick_bottle_{bottle.id}",
+                            caption=bottle_text,
+                            reply_markup=bottle_markup,
+                        )
+                    )
+                case enums.MessageMediaType.DOCUMENT.name if bottle.file_id:
+                    results.append(
+                        types.InlineQueryResultCachedDocument(
+                            document_file_id=bottle.file_id,
+                            title=i18n.t(
+                                "bot.inline.pick_bottle_title", locale=user_config.lang
+                            ),
+                            id=f"pick_bottle_{bottle.id}",
+                            description=bottle_description,
+                            caption=bottle_text,
+                            reply_markup=bottle_markup,
+                        )
+                    )
+                case enums.MessageMediaType.ANIMATION.name if bottle.file_id:
+                    results.append(
+                        types.InlineQueryResultCachedAnimation(
+                            animation_file_id=bottle.file_id,
+                            id=f"pick_bottle_{bottle.id}",
+                            title=i18n.t(
+                                "bot.inline.pick_bottle_title", locale=user_config.lang
+                            ),
+                            caption=bottle_text,
+                            reply_markup=bottle_markup,
+                        )
+                    )
+                case _:
+                    results.append(
+                        types.InlineQueryResultArticle(
+                            id=f"pick_bottle_{bottle.id}",
+                            title=i18n.t(
+                                "bot.inline.pick_bottle_title", locale=user_config.lang
+                            ),
+                            description=bottle_description,
+                            input_message_content=types.InputTextMessageContent(
+                                message_text=bottle_text
+                                or i18n.t(
+                                    "bot.msg.bottle.no_bottles",
+                                    locale=user_config.lang,
+                                ),
+                            ),
+                            reply_markup=bottle_markup,
+                        )
+                    )
+        else:
+            results.append(
+                types.InlineQueryResultArticle(
+                    id="pick_bottle_empty",
+                    title=i18n.t("bot.inline.pick_bottle_title", locale=user_config.lang),
+                    description=i18n.t(
+                        "bot.msg.bottle.no_bottles", locale=user_config.lang
+                    ),
+                    input_message_content=types.InputTextMessageContent(
+                        message_text=i18n.t(
+                            "bot.msg.bottle.no_bottles", locale=user_config.lang
+                        ),
+                    ),
+                )
+            )
         if query.chat_type == enums.ChatType.SUPERGROUP:
             results.append(
                 types.InlineQueryResultArticle(
@@ -78,67 +262,43 @@ async def inline_query_handler(client: Client, query: types.InlineQuery):
                     ),
                 )
             )
-        results.append(
-            types.InlineQueryResultArticle(
-                id="pick_bottle",
-                title=i18n.t("bot.inline.pick_bottle_title", locale=user_config.lang),
-                description=i18n.t(
-                    "bot.inline.pick_bottle_description", locale=user_config.lang
-                ),
-                input_message_content=types.InputTextMessageContent(
-                    message_text=i18n.t(
-                        "bot.inline.pick_bottle_quering", locale=user_config.lang
-                    ),
-                ),
-                reply_markup=types.InlineKeyboardMarkup(
-                    [
-                        [
-                            types.InlineKeyboardButton(
-                                text=i18n.t(
-                                    "bot.inline.resolve_button_noop",
-                                    locale=user_config.lang,
-                                ),
-                                callback_data="noop",
-                            )
-                        ]
-                    ]
-                ),
-            )
-        )
-        results.append(
-            types.InlineQueryResultArticle(
-                title="魔裁 MEME",
-                description="魔法少女的魔女审判相关 MEME 生成",
-                input_message_content=types.InputTextMessageContent(
-                    message_text="""
-魔裁 MEME 生成器, 用法:
-
-1. 安安说: ms anan [表情] [文本]
-示例: ms anan 无语 吾辈现在不想说话
-2. 辩论: ms trial [角色] ([类型] 文本...)
-示例: ms trial 希罗 [伪证] 我当时睡得可香了
-"""
-                ),
-                reply_markup=types.InlineKeyboardMarkup(
-                    [
-                        [
-                            types.InlineKeyboardButton(
-                                text="安安说",
-                                switch_inline_query_current_chat="ms anan ",
-                            ),
-                            types.InlineKeyboardButton(
-                                text="辩论",
-                                switch_inline_query_current_chat="ms trial ",
-                            ),
-                        ]
-                    ]
-                ),
-            )
-        )
+        # MEME inline menu disabled by request. Keep the code for future reuse.
+        # results.append(
+        #     types.InlineQueryResultArticle(
+        #         title="Ma Pháp Thiếu Nữ",
+        #         description="Tạo meme Ma Pháp Thiếu Nữ: An An nói hoặc tranh biện",
+        #         input_message_content=types.InputTextMessageContent(
+        #             message_text="""
+        # Trình tạo MEME Ma Pháp Thiếu Nữ, cách dùng:
+        #
+        # 1. An An nói: ms anan [biểu cảm] [nội dung]
+        # Ví dụ: ms anan vô_ngữ Giờ ta không muốn nói chuyện
+        # 2. Tranh biện: ms trial [nhân vật] ([loại] nội dung...)
+        # Ví dụ: ms trial hiro [ngụy chứng] Lúc đó tôi ngủ rất ngon
+        # """
+        #         ),
+        #         reply_markup=types.InlineKeyboardMarkup(
+        #             [
+        #                 [
+        #                     types.InlineKeyboardButton(
+        #                         text="An An nói",
+        #                         switch_inline_query_current_chat="ms anan Yandere Hãy để mình nói gì đó đi~",
+        #                     ),
+        #                     types.InlineKeyboardButton(
+        #                         text="Tranh biện",
+        #                         switch_inline_query_current_chat="ms trial hiro [ngụy chứng] Lúc đó tôi ngủ rất ngon",
+        #                     ),
+        #                 ]
+        #             ]
+        #         ),
+        #     )
+        # )
         await query.answer(
             results=results,
             switch_pm_text=i18n.t("bot.inline.switch_pm_text"),
             switch_pm_parameter="inline_query",
+            cache_time=0,
+            is_personal=True,
         )
         return
     if datas[0].startswith("q"):
@@ -279,6 +439,69 @@ async def chosen_inline_result(client: Client, result: types.ChosenInlineResult)
             text=bottle.text,
             reply_markup=types.InlineKeyboardMarkup(buttons),
         )
+        return
+    elif result.result_id == "seg":
+        lang = user_config.lang
+        chat = await database.get_chat_by_id(info.chat_id)
+        if chat is not None:
+            lang = chat.chat_config.lang
+            if not chat.chat_config.setu_enabled:
+                await client.edit_inline_text(
+                    inline_message_id=result.inline_message_id,
+                    text=i18n.t("bot.msg.manyacg.chat_setu_disabled", locale=lang),
+                )
+                return
+        if not manyacg_client:
+            await client.edit_inline_text(
+                inline_message_id=result.inline_message_id,
+                text=i18n.t("bot.msg.manyacg.setu_error", locale=lang),
+            )
+            return
+        try:
+            resp = await manyacg_client.random_artwork(limit=1, r18=2)
+            if resp.status != 200 or not resp.data:
+                await client.edit_inline_text(
+                    inline_message_id=result.inline_message_id,
+                    text=i18n.t("bot.msg.manyacg.setu_error", locale=lang),
+                )
+                return
+            artwork = resp.data[0]
+            if not artwork.pictures:
+                await client.edit_inline_text(
+                    inline_message_id=result.inline_message_id,
+                    text=i18n.t("bot.msg.manyacg.setu_error", locale=lang),
+                )
+                return
+            picture = artwork.pictures[random.randint(0, len(artwork.pictures) - 1)]
+            await client.edit_inline_media(
+                inline_message_id=result.inline_message_id,
+                media=types.InputMediaPhoto(
+                    media=picture.regular,
+                    caption=f"<a href='{artwork.source_url}'>{html.escape(artwork.title)}</a>",
+                    parse_mode=enums.ParseMode.HTML,
+                    has_spoiler=artwork.r18,
+                ),
+                reply_markup=types.InlineKeyboardMarkup(
+                    [
+                        [
+                            types.InlineKeyboardButton(
+                                text=i18n.t("bot.button.manyacg.detail", locale=lang),
+                                url=artwork.source_url,
+                            ),
+                            types.InlineKeyboardButton(
+                                text=i18n.t("bot.button.manyacg.original", locale=lang),
+                                url=f"https://t.me/{app_config.manyacg_bot}/?start=file_{picture.id}",
+                            ),
+                        ]
+                    ]
+                ),
+            )
+        except Exception as e:
+            logger.error(f"inline seg error: {e.__class__.__name__}:{e}")
+            await client.edit_inline_text(
+                inline_message_id=result.inline_message_id,
+                text=i18n.t("bot.msg.manyacg.setu_error", locale=lang),
+            )
         return
     elif result.result_id.startswith("ms_"):
         dataid = result.result_id.split("_")[1]
