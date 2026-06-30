@@ -20,7 +20,7 @@ class I18n:
 
     def load_translations(self):
         if not self.locales_dir.exists():
-            raise FileNotFoundError(f"翻译目录 '{self.locales_dir}' 不存在")
+            raise FileNotFoundError(f"Translation directory '{self.locales_dir}' does not exist")
 
         for locale_dir in self.locales_dir.iterdir():
             if locale_dir.is_dir():
@@ -43,7 +43,7 @@ class I18n:
                             self.translations[locale_name], content
                         )
             except Exception as e:
-                print(f"加载文件 {yaml_file} 时出错: {e}")
+                print(f"Error loading file {yaml_file}: {e}")
 
     def _merge_translations(self, target: dict[str, Any], source: dict[str, Any]):
         for key, value in source.items():
@@ -92,14 +92,14 @@ class I18n:
 
     def t(self, key: str, locale: str = "") -> str:
         """
-        翻译指定的键
+        Translate a key.
 
         Args:
-            key: 翻译键, 使用点分隔的字符串表示嵌套
-            locale: 目标语言
+            key: Translation key using dot notation for nested values.
+            locale: Target locale.
 
         Returns:
-            翻译后的字符串，如果找不到则返回原键
+            Translated string, or a fallback value if the key is missing.
         """
         if locale is None:
             locale = self.default_locale
@@ -140,7 +140,7 @@ class I18n:
         if locale in self.available_locales:
             self.default_locale = locale
         else:
-            print(f"语言 '{locale}' 不可用")
+            print(f"Locale '{locale}' is not available")
 
     def reload(self):
         self.translations.clear()
