@@ -243,18 +243,29 @@ if app_config.agent and app_config.agent_model:
             ),
             Tool(
                 tools.schedule_message,
-                prepare=tools.prepare_not_guest_mode,
+                prepare=tools.compose_prepare(
+                    tools.prepare_not_guest_mode, tools.prepare_agent_schedule_tool
+                ),
                 sequential=True,
             ),
-            Tool(tools.list_scheduled_messages, prepare=tools.prepare_not_guest_mode),
+            Tool(
+                tools.list_scheduled_messages,
+                prepare=tools.compose_prepare(
+                    tools.prepare_not_guest_mode, tools.prepare_agent_schedule_tool
+                ),
+            ),
             Tool(
                 tools.cancel_scheduled_message,
-                prepare=tools.prepare_not_guest_mode,
+                prepare=tools.compose_prepare(
+                    tools.prepare_not_guest_mode, tools.prepare_agent_schedule_tool
+                ),
                 sequential=True,
             ),
             Tool(
                 tools.send_poll,
-                prepare=tools.prepare_not_guest_mode,
+                prepare=tools.compose_prepare(
+                    tools.prepare_not_guest_mode, tools.prepare_agent_schedule_tool
+                ),
                 sequential=True,
             ),
             Tool(tools.block_user, prepare=tools.prepare_not_guest_mode),

@@ -448,6 +448,7 @@ bot:
       pick_bottle_enabled: Nhặt chai
       group_memory_enabled: Bộ nhớ nhóm
       agent_group_manage_enabled: AI quản lý nhóm
+      agent_schedule_enabled: AI nhắc lịch
       agent_ban_users_enabled: Cho phép AI ban user
       agent_mute_users_enabled: Cho phép AI mute user
       agent_automod_enabled: AI Tự động kiểm duyệt

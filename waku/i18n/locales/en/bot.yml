@@ -366,6 +366,7 @@ bot:
       pick_bottle_enabled: Pick Bottle
       group_memory_enabled: Group Memory
       agent_group_manage_enabled: AI Group Management
+      agent_schedule_enabled: AI Scheduled Reminders
       agent_ban_users_enabled: Allow AI to Ban Users
       agent_mute_users_enabled: Allow AI to Mute Users
       agent_automod_enabled: AI Proactive Auto-Mod

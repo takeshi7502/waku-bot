@@ -105,6 +105,10 @@ class ChatConfigMarkup:
                             "agent_group_manage_enabled"
                         ),
                     ),
+                    InlineKeyboardButton(
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.agent_schedule_enabled', locale=self.lang), self.chat_config.agent_schedule_enabled)}",
+                        callback_data=self.get_callback_data("agent_schedule_enabled"),
+                    ),
                 ],
                 [
                     InlineKeyboardButton(
@@ -196,6 +200,8 @@ async def config_chat(
                 chat_config.agent_group_manage_enabled = (
                     not chat_config.agent_group_manage_enabled
                 )
+            case "agent_schedule_enabled":
+                chat_config.agent_schedule_enabled = not chat_config.agent_schedule_enabled
             case _:
                 await callback_query.answer(
                     text=i18n.t("bot.msg.unknown_operation", locale=lang),

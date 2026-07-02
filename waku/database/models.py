@@ -58,6 +58,7 @@ class ChatConfig:
     ai_reply_other_bots_enabled: bool = False
     ai_comment: bool = False
     agent_group_manage_enabled: bool = True
+    agent_schedule_enabled: bool = True
     agent_ban_users_enabled: bool = False
     agent_mute_users_enabled: bool = False
     agent_automod_enabled: bool = False
@@ -98,6 +99,7 @@ class ChatConfig:
                 data.get("agent_ban_users_enabled", True)
                 or data.get("agent_mute_users_enabled", False),
             ),
+            agent_schedule_enabled=data.get("agent_schedule_enabled", True),
             agent_ban_users_enabled=data.get("agent_ban_users_enabled", False),
             agent_mute_users_enabled=data.get("agent_mute_users_enabled", False),
             agent_automod_enabled=data.get("agent_automod_enabled", False),

@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from pydantic_ai import RunContext
 from pydantic_ai.tools import ToolDefinition
 
-from waku import common
+from waku import common, database
 from waku.config import app_config
 from waku.logger import logger
 from waku.plugins.agent import datatype, state, sticker_memory, sticker_vec
@@ -52,6 +52,18 @@ async def prepare_configurable_tools(
     ctx: RunContext[datatype.ContextDeps], tool_def: ToolDefinition
 ) -> ToolDefinition | None:
     if tool_def.name in app_config.agent_extra_tools:
+        return tool_def
+    return None
+
+
+async def prepare_agent_schedule_tool(
+    ctx: RunContext[datatype.ContextDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    """Show Telegram schedule tools only when enabled for the current group."""
+    if ctx.deps.chat_id is None or ctx.deps.chat_id >= -100:
+        return tool_def
+    chat_config = await database.get_chat_config(ctx.deps.chat_id)
+    if chat_config.agent_schedule_enabled:
         return tool_def
     return None
 
