@@ -15,7 +15,7 @@ from waku.plugins.agent.styling import convert_md
 
 _MD_SEPARATOR_RE = re.compile(r"^(?:[-*_][ \t]*){3,}$")
 
-TELEGRAM_SAFE_MESSAGE_LENGTH = 3900
+TELEGRAM_SAFE_MESSAGE_LENGTH = 4096
 
 
 def _split_text_for_telegram(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LENGTH) -> list[str]:

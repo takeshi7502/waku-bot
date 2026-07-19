@@ -1868,8 +1868,8 @@ wheels = [
 
 [[package]]
 name = "kurigram"
-version = "2.2.22"
-source = { git = "https://github.com/KurimuzonAkuma/kurigram.git#5e333acb9acf003d0d97c982b6c2790c444c21ec" }
+version = "2.2.24"
+source = { git = "https://github.com/KurimuzonAkuma/kurigram.git#793ef2460d48846b8c934c86b73a3a0f0645987f" }
 dependencies = [
     { name = "pyaes" },
     { name = "python-socks" },

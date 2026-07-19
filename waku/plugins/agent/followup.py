@@ -18,6 +18,7 @@ from waku.plugins.agent.runner import (
 )
 
 from .agent import agent, model, multimodal_model, powermemory, small_model
+from .message_text import get_message_text_markdown
 from .tools import block as tools
 from .whitelist import is_chat_allowed
 
@@ -71,7 +72,7 @@ async def _follow_up_filter_func(
         return False
     if not is_chat_allowed(chat.id):
         return False
-    text = message.text or message.caption
+    text = get_message_text_markdown(message)
     if not text or len(text.strip()) == 0:
         return False
     if (
@@ -157,7 +158,7 @@ async def handle_follow_up_message(
     if not reply_to_user:
         return
     # 调用AI判断相关性
-    message_text = message.text or message.caption
+    message_text = get_message_text_markdown(message)
     # 使用 full_output（模型的完整输出）而不是 reply_text（可能只是最后一条消息）
     bot_full_output = (
         bot_reply.full_output if bot_reply.full_output else bot_reply.reply_text

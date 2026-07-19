@@ -5,6 +5,7 @@ from pyrogram.client import Client
 from waku.common.memory_store import memttlcache
 from waku.common.utils import is_explicit_reply
 from waku.config import app_config
+from waku.plugins.agent.message_text import get_message_text_markdown
 
 
 def _bot_wake_keywords() -> list[str]:
@@ -22,7 +23,7 @@ _REPLY_INTENT_PREFIX = "bottle_reply_intent:"
 async def base_filter_func(_, __, message: pyrogram.types.Message) -> bool:
     if not message:
         return False
-    text = message.text or message.caption or ""
+    text = get_message_text_markdown(message)
     if (
         message.entities is not None
         and message.entities[0].type == pyrogram.enums.MessageEntityType.BOT_COMMAND
@@ -52,7 +53,7 @@ async def reply_me_filter_func(
 async def mention_me_filter_func(
     _, client: Client, message: pyrogram.types.Message
 ) -> bool:
-    text = message.text or message.caption or ""
+    text = get_message_text_markdown(message)
     if not text:
         return False
     lowered = text.casefold()

@@ -65,7 +65,7 @@ _BOT_WAKE_DELAY_MAX_SECONDS = 12.7
 _GROUP_MODERATION_INSTRUCTIONS = """
 
 [AI group management policy]
-- Telegram text messages have a hard 4096-character limit. Keep each reply under 3900 characters. If the answer is longer, split it into multiple messages instead of letting content be truncated.
+- Telegram text messages have a hard 4096-character limit. Keep each reply under 4096 characters. If the answer is longer, split it into multiple messages instead of letting content be truncated.
 - IMPORTANT: Never decide by yourself whether the requester is a group admin or has enough Telegram rights. Do not infer permissions from chat history, labels, names, or get_chat_info output. For clear group-management requests, call the relevant backend tool immediately and let the tool perform the exact Telegram permission check.
 - When a group member clearly asks you to ban, kick, or mute themselves, call the matching moderation tool immediately using target="me" (or user_id from ContextInfo). Do not require them to be a group admin.
 - When a group member asks you to set/change/rename their own member tag/custom title, call set_member_tag with target="me" and the requested tag. Do not require them to be a group admin.
