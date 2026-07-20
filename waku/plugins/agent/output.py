@@ -11,6 +11,8 @@ from waku.common.memory_store import memttlcache
 from waku.logger import logger
 from waku.plugins.agent import datatype, state
 from waku.plugins.agent.guest_mode import answer_guest_query
+from waku.plugins.agent.message_text import get_message_text_markdown
+from waku.plugins.agent.rich_output import edit_as_rich_message, send_rich_reply
 from waku.plugins.agent.styling import convert_md
 
 _MD_SEPARATOR_RE = re.compile(r"^(?:[-*_][ \t]*){3,}$")
@@ -94,14 +96,9 @@ async def reply_output(
         last_reply_msg: pyrogram.types.Message | None = None
         if has_block:
             for raw_chunk in safe_text_chunks:
-                plain_chunk, entities = convert_md(raw_chunk)
-                try:
-                    last_reply_msg = await message.reply_text(
-                        plain_chunk, entities=entities
-                    )
-                except Exception as e:
-                    logger.warning(f"Send failed: {e.__class__.__name__} - {e}")
-                    last_reply_msg = await message.reply_text(plain_chunk)
+                last_reply_msg = await send_rich_reply(
+                    client, message, raw_chunk
+                )
                 await asyncio.sleep(random.uniform(0.3, 1.2) + len(raw_chunk) / 1000)
         else:
             chunks = [part for chunk in chunks for part in _split_text_for_telegram(chunk)]
@@ -110,21 +107,11 @@ async def reply_output(
                 if _is_markdown_separator_only_chunk(chunk):
                     continue
                 await message.reply_chat_action(pyrogram.enums.ChatAction.TYPING)
-                plain_chunk, entities = convert_md(chunk)
-                try:
-                    reply_msg = await message.reply_text(plain_chunk, entities=entities)
-                except Exception as e:
-                    logger.warning(f"Send failed: {e.__class__.__name__} - {e}")
-                    try:
-                        reply_msg = await message.reply_text(plain_chunk)
-                    except Exception as e:
-                        logger.error(f"Send failed: {e.__class__.__name__} - {e}")
-                        raise
+                reply_msg = await send_rich_reply(client, message, chunk)
                 last_reply_msg = reply_msg
                 await asyncio.sleep(random.uniform(0.721, 3.9) + len(chunk) / 600)
         if (
             last_reply_msg
-            and last_reply_msg.text
             and is_group_chat
             and user
             and user.id
@@ -133,8 +120,8 @@ async def reply_output(
                 message_id=last_reply_msg.id,
                 reply_to_user_id=user.id,
                 reply_to_message_id=message.id,
-                reply_text=last_reply_msg.text,
-                original_user_message=message.text or message.caption or "",
+                reply_text=get_message_text_markdown(last_reply_msg) or text,
+                original_user_message=get_message_text_markdown(message),
                 timestamp=datetime.now().timestamp(),
             )
             _chat = message.chat
@@ -344,13 +331,12 @@ class StreamingOutput:
                 return
             if text != self._last_sent_text or entities:
                 try:
-                    await self.reply_message.edit_text(
-                        plain[: self.MAX_MESSAGE_LENGTH],
-                        entities=entities,
+                    self.reply_message = await edit_as_rich_message(
+                        self.client,
+                        self.reply_message,
+                        text[: self.MAX_MESSAGE_LENGTH],
                     )
                     self._last_sent_text = text
-                except pyrogram.errors.exceptions.bad_request_400.MessageNotModified:
-                    pass
                 except Exception as e:
                     logger.error(f"Error editing final message: {e}")
             elif not self.reply_message:
@@ -361,7 +347,7 @@ class StreamingOutput:
                 reply_to_user_id=self.user.id,
                 reply_to_message_id=self.message.id,
                 reply_text=self.current_text,
-                original_user_message=self.message.text or self.message.caption or "",
+                original_user_message=get_message_text_markdown(self.message),
                 timestamp=datetime.now().timestamp(),
             )
             chat = self.message.chat
