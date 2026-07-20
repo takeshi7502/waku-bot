@@ -39,7 +39,7 @@ from .media import _find_artwork_url, _send_discord_artwork, _send_discord_setu
 from .messages import _build_prompt, _is_seg_command
 from .models import DiscordGuildSettings
 from .permissions import _can_manage_discord_config, _is_discord_bot_admin, _send_admin_notice
-from .settings import _delete_discord_guild_settings, _delete_discord_guild_settings_by_id, _discord_guild_settings, _history_key, _set_discord_guild_settings, _set_discord_guild_settings_by_id, _waiting_key
+from .settings import _delete_discord_guild_settings, _delete_discord_guild_settings_by_id, _discord_dm_settings, _discord_guild_settings, _history_key, _set_discord_guild_settings, _set_discord_guild_settings_by_id, _waiting_key
 from .state import _discord_agent_busy_timeout, _discord_agent_gate, _discord_agent_limit
 from .utilities import _channel_name, _clean_content, _guild_name, _message_text
 from .views.config import _discord_config_text, _discord_dm_config_text, _new_discord_config_view, _new_discord_dm_config_view
@@ -53,8 +53,41 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
     parts = content[len(prefix) :].strip().split(maxsplit=1)
     command = parts[0].lower() if parts else ""
     args = parts[1].strip() if len(parts) > 1 else ""
-    if command not in {"waku", "unwaku", "config", "server"}:
+    if command not in {"waku", "unwaku", "config", "server", "forget"}:
         return False
+
+    if command == "forget":
+        waiting_key = _waiting_key(message.author.id)
+        if await common.memstore.get(waiting_key):
+            await message.channel.send(
+                "Mình vẫn đang xử lý tin nhắn trước, chờ một chút nhé...",
+                reference=message,
+                mention_author=False,
+            )
+            return True
+        history_key = await _history_key(message)
+        await common.memttlcache.delete(history_key)
+        settings = (
+            await _discord_guild_settings(message.guild)
+            if message.guild is not None
+            else await _discord_dm_settings(message.author)
+        )
+        forget_text = (
+            "Chuyện gì vừa xảy ra vậy? Hình như mình quên mất rồi..."
+            if settings.lang == "vi-VN"
+            else "What just happened? I seem to have forgotten..."
+        )
+        await message.channel.send(
+            forget_text,
+            reference=message,
+            mention_author=False,
+        )
+        logger.info(
+            "Discord AI history forgotten: "
+            f"guild={getattr(message.guild, 'id', None)} "
+            f"channel={message.channel.id} user={message.author.id}"
+        )
+        return True
 
     if message.guild is None:
         if command == "config":
