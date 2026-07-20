@@ -72,6 +72,12 @@ class ChatConfig:
     discord_allow_r18: bool = False
     discord_r18_mode: int = 0
     discord_ai_reply: bool = True
+    discord_auth_status: str = "none"
+    discord_auth_requester_id: int | None = None
+    discord_auth_channel_id: int | None = None
+    discord_auth_requested_at: str | None = None
+    discord_auth_rejection_reason: str | None = None
+    discord_auth_review_messages: list[dict] | None = None
     lang: str = "vi-VN"
 
     @classmethod
@@ -112,6 +118,12 @@ class ChatConfig:
                 2 if data.get("discord_allow_r18", False) else 0,
             ),
             discord_ai_reply=data.get("discord_ai_reply", True),
+            discord_auth_status=data.get("discord_auth_status", "none"),
+            discord_auth_requester_id=data.get("discord_auth_requester_id"),
+            discord_auth_channel_id=data.get("discord_auth_channel_id"),
+            discord_auth_requested_at=data.get("discord_auth_requested_at"),
+            discord_auth_rejection_reason=data.get("discord_auth_rejection_reason"),
+            discord_auth_review_messages=data.get("discord_auth_review_messages"),
             lang=data.get("lang", "vi-VN"),
         )
 

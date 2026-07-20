@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import io
 import random
 import re
@@ -120,6 +121,12 @@ async def _set_discord_guild_settings(
         config.discord_allow_r18 = settings.r18_mode != 0
         config.discord_r18_mode = max(0, min(2, int(settings.r18_mode)))
         config.discord_ai_reply = settings.ai_reply
+        config.discord_auth_status = DISCORD_AUTH_STATUS_NONE
+        config.discord_auth_requester_id = None
+        config.discord_auth_channel_id = None
+        config.discord_auth_requested_at = None
+        config.discord_auth_rejection_reason = None
+        config.discord_auth_review_messages = None
         config.group_memory_enabled = settings.group_memory_enabled
         config.setu_enabled = settings.setu_enabled
         config.lang = settings.lang
@@ -151,6 +158,12 @@ async def _set_discord_guild_settings_by_id(
         config.discord_allow_r18 = settings.r18_mode != 0
         config.discord_r18_mode = max(0, min(2, int(settings.r18_mode)))
         config.discord_ai_reply = settings.ai_reply
+        config.discord_auth_status = DISCORD_AUTH_STATUS_NONE
+        config.discord_auth_requester_id = None
+        config.discord_auth_channel_id = None
+        config.discord_auth_requested_at = None
+        config.discord_auth_rejection_reason = None
+        config.discord_auth_review_messages = None
         config.group_memory_enabled = settings.group_memory_enabled
         config.setu_enabled = settings.setu_enabled
         config.lang = settings.lang
@@ -170,6 +183,142 @@ async def _delete_discord_guild_settings_by_id(guild_id: int) -> None:
             await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild_id}")
     await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
+
+async def _discord_auth_config(guild_id: int, guild_name: str | None = None):
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatConfig, ChatData
+
+    async with AsyncSessionFactory() as session:
+        chat = await session.get(ChatData, guild_id)
+        if chat is None:
+            return ChatConfig()
+        return chat.chat_config
+
+
+async def _submit_discord_auth_request(
+    guild_id: int,
+    guild_name: str,
+    requester_id: int,
+    channel_id: int,
+):
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with state._discord_auth_lock(guild_id):
+        async with AsyncSessionFactory() as session:
+            chat = await session.get(ChatData, guild_id)
+            if chat is None:
+                chat = ChatData(id=guild_id, title=guild_name, username=None)
+                session.add(chat)
+                await session.flush()
+            else:
+                chat.title = guild_name
+            config = chat.chat_config
+            if config.discord_enabled or config.discord_auth_status == DISCORD_AUTH_STATUS_PENDING:
+                return config, False
+            config.discord_auth_status = DISCORD_AUTH_STATUS_PENDING
+            config.discord_auth_requester_id = requester_id
+            config.discord_auth_channel_id = channel_id
+            config.discord_auth_requested_at = datetime.now(UTC).isoformat()
+            config.discord_auth_rejection_reason = None
+            config.discord_auth_review_messages = []
+            chat.chat_config = config
+            await session.commit()
+        await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
+        return config, True
+
+
+async def _set_discord_auth_review_messages(guild_id: int, messages: list[dict]) -> None:
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with AsyncSessionFactory() as session:
+        chat = await session.get(ChatData, guild_id)
+        if chat is None:
+            return
+        config = chat.chat_config
+        if config.discord_auth_status != DISCORD_AUTH_STATUS_PENDING:
+            return
+        config.discord_auth_review_messages = messages
+        chat.chat_config = config
+        await session.commit()
+
+
+async def _reset_discord_auth_request(guild_id: int) -> None:
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with state._discord_auth_lock(guild_id):
+        async with AsyncSessionFactory() as session:
+            chat = await session.get(ChatData, guild_id)
+            if chat is None:
+                return
+            config = chat.chat_config
+            if config.discord_enabled:
+                return
+            config.discord_auth_status = DISCORD_AUTH_STATUS_NONE
+            config.discord_auth_requester_id = None
+            config.discord_auth_channel_id = None
+            config.discord_auth_requested_at = None
+            config.discord_auth_rejection_reason = None
+            config.discord_auth_review_messages = None
+            chat.chat_config = config
+            await session.commit()
+
+
+async def _approve_discord_auth_request(guild_id: int):
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with state._discord_auth_lock(guild_id):
+        async with AsyncSessionFactory() as session:
+            chat = await session.get(ChatData, guild_id)
+            if chat is None:
+                return None
+            config = chat.chat_config
+            if config.discord_auth_status != DISCORD_AUTH_STATUS_PENDING:
+                return None
+            snapshot = copy.deepcopy(config)
+            config.discord_enabled = True
+            config.discord_muted = False
+            config.discord_r18_mode = 0
+            config.discord_allow_r18 = False
+            config.discord_ai_reply = True
+            config.group_memory_enabled = True
+            config.setu_enabled = True
+            config.discord_auth_status = DISCORD_AUTH_STATUS_NONE
+            config.discord_auth_requester_id = None
+            config.discord_auth_channel_id = None
+            config.discord_auth_requested_at = None
+            config.discord_auth_rejection_reason = None
+            config.discord_auth_review_messages = None
+            chat.chat_config = config
+            await session.commit()
+        await common.memttlcache.delete(f"chat_config:{guild_id}")
+        await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
+        return snapshot
+
+
+async def _reject_discord_auth_request(guild_id: int, reason: str):
+    from waku.database.db import AsyncSessionFactory
+    from waku.database.models import ChatData
+
+    async with state._discord_auth_lock(guild_id):
+        async with AsyncSessionFactory() as session:
+            chat = await session.get(ChatData, guild_id)
+            if chat is None:
+                return None
+            config = chat.chat_config
+            if config.discord_auth_status != DISCORD_AUTH_STATUS_PENDING:
+                return None
+            config.discord_enabled = False
+            config.discord_auth_status = DISCORD_AUTH_STATUS_REJECTED
+            config.discord_auth_rejection_reason = reason.strip()[:1000]
+            chat.chat_config = config
+            await session.commit()
+        await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
+        return config
+
 
 async def _discord_dm_settings(user: discord.abc.User) -> DiscordGuildSettings:
     from waku.database.db import AsyncSessionFactory

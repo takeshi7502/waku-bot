@@ -38,10 +38,11 @@ from .history import _reaction_counter_key, _sanitize_discord_history, _strip_mu
 from .media import _find_artwork_url, _send_discord_artwork, _send_discord_setu
 from .messages import _build_prompt, _is_seg_command
 from .models import DiscordGuildSettings
-from .permissions import _can_manage_discord_config, _is_discord_bot_admin, _send_admin_notice
+from .permissions import _can_manage_discord_config, _is_discord_bot_admin, _is_discord_server_admin, _is_discord_user_bot_admin, _send_admin_notice
 from .settings import _delete_discord_guild_settings, _delete_discord_guild_settings_by_id, _discord_dm_settings, _discord_guild_settings, _history_key, _set_discord_guild_settings, _set_discord_guild_settings_by_id, _waiting_key
 from .state import _discord_agent_busy_timeout, _discord_agent_gate, _discord_agent_limit
 from .utilities import _channel_name, _clean_content, _guild_name, _message_text
+from .views.authorization import _send_discord_authorization_panel
 from .views.config import _discord_config_text, _discord_dm_config_text, _new_discord_config_view, _new_discord_dm_config_view
 from .views.server_list import _send_discord_server_list
 
@@ -131,7 +132,7 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
     settings = await _discord_guild_settings(message.guild)
     match command:
         case "waku":
-            if not _is_discord_bot_admin(message):
+            if not _is_discord_user_bot_admin(message.author):
                 return True
             settings.enabled = True
             settings.r18_mode = 0
@@ -141,11 +142,22 @@ async def _handle_discord_admin_command(message: discord.Message) -> bool:
             await _set_discord_guild_settings(message.guild, settings)
             await _send_admin_notice(message, f"Waku has been authorized for **{message.guild.name}**.")
         case "unwaku":
-            if not _is_discord_bot_admin(message):
+            if not _is_discord_user_bot_admin(message.author):
                 return True
             await _delete_discord_guild_settings(message.guild)
             await _send_admin_notice(message, f"Waku has been unauthorized for **{message.guild.name}**.")
         case "config":
+            if not settings.enabled:
+                if not _is_discord_server_admin(message):
+                    await message.channel.send(
+                        "Chỉ chủ server hoặc thành viên có quyền Administrator mới có thể xin quyền sử dụng Waku.",
+                        reference=message,
+                        mention_author=False,
+                        delete_after=10,
+                    )
+                    return True
+                await _send_discord_authorization_panel(message)
+                return True
             if not _can_manage_discord_config(message, settings):
                 return True
             view = await _new_discord_config_view(message.guild)

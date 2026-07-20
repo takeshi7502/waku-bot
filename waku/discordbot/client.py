@@ -38,6 +38,7 @@ from .history import _record_discord_group_memory, _remember_discord_emojis, _re
 from .messages import _is_seg_command, _matches_keyword, _should_wake
 from .permissions import _channel_allowed
 from .utilities import _channel_name, _guild_name, _message_text
+from .views.authorization import DiscordAuthorizationRequestView, DiscordAuthorizationReviewView
 from .views.server_list import DiscordServerListView
 
 def _create_client() -> discord.Client:
@@ -57,8 +58,10 @@ def _create_client() -> discord.Client:
         logger.success(f"Discord AI chat ready as {user} ({user.id})")
         if not state.server_list_view_registered:
             client.add_view(DiscordServerListView())
+            client.add_view(DiscordAuthorizationRequestView())
+            client.add_view(DiscordAuthorizationReviewView())
             state.server_list_view_registered = True
-            logger.info("Discord persistent server list view registered")
+            logger.info("Discord persistent server/config views registered")
 
     @client.event
     async def on_message(message: discord.Message) -> None:

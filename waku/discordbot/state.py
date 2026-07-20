@@ -16,6 +16,7 @@ server_list_view_registered = False
 discord_image_send_lock: asyncio.Lock | None = None
 discord_agent_semaphore: asyncio.Semaphore | None = None
 discord_agent_semaphore_limit = 0
+discord_auth_locks: dict[int, asyncio.Lock] = {}
 
 
 def _discord_image_lock() -> asyncio.Lock:
@@ -31,6 +32,14 @@ def _discord_agent_limit() -> int:
 
 def _discord_agent_busy_timeout() -> float:
     return DISCORD_AGENT_BUSY_TIMEOUT
+
+
+def _discord_auth_lock(guild_id: int) -> asyncio.Lock:
+    lock = discord_auth_locks.get(guild_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        discord_auth_locks[guild_id] = lock
+    return lock
 
 
 def _discord_agent_gate() -> asyncio.Semaphore:
