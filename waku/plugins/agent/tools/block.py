@@ -10,6 +10,7 @@ from pyrogram.types import ChatPermissions
 
 from waku import common, database
 from waku.affection import get_affection_rank
+from waku.bot.client import client
 from waku.config import app_config
 from waku.database.models import UserChatAssociation, UserData
 from waku.logger import logger
@@ -34,6 +35,53 @@ def _calculate_block_duration(requested_minutes: int, affection_rank: float) -> 
     """
     factor = max(0.1, 1.0 - affection_rank**2)
     return max(1, round(requested_minutes * factor))
+
+
+def _mute_job_id(chat_id: int, user_id: int) -> str:
+    return f"agent_unmute:{chat_id}:{user_id}"
+
+
+def _mute_duration_seconds(
+    seconds: int = 0,
+    minutes: int = 0,
+    hours: int = 0,
+    days: int = 0,
+) -> int:
+    values = (seconds, minutes, hours, days)
+    if any(value < 0 for value in values):
+        raise ValueError("Mute duration values cannot be negative.")
+    return seconds + minutes * 60 + hours * 3600 + days * 86400
+
+
+def _describe_duration(total_seconds: int) -> str:
+    parts: list[str] = []
+    remaining = total_seconds
+    for unit_seconds, label in (
+        (86400, "day"),
+        (3600, "hour"),
+        (60, "minute"),
+        (1, "second"),
+    ):
+        value, remaining = divmod(remaining, unit_seconds)
+        if value:
+            parts.append(f"{value} {label}{'' if value == 1 else 's'}")
+    return " ".join(parts) or "0 seconds"
+
+
+async def _scheduled_unmute_job(chat_id: int, user_id: int) -> None:
+    """Persistent APScheduler target for removing a timed mute."""
+    try:
+        await client.restrict_chat_member(
+            chat_id,
+            user_id,
+            permissions=_unmute_permissions(),
+        )
+        logger.info(f"Scheduled unmute completed for user {user_id} in chat {chat_id}")
+    except Exception as e:
+        logger.error(
+            f"Scheduled unmute failed for user {user_id} in chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
 
 
 async def _can_request_moderation_action(
@@ -463,28 +511,87 @@ async def kick_user(
     return f"User {user_id} has been kicked from this group and can rejoin."
 
 
+async def delete_replied_message(
+    ctx: RunContext[datatype.ContextDeps],
+    reason: str = "",
+) -> str:
+    """Delete the Telegram message explicitly replied to by an authorized admin.
+
+    Use only when the current request is an explicit reply to the message to delete.
+
+    Args:
+        reason: Brief reason for deleting the message.
+    """
+    if refusal := await _ensure_group_management_allowed(ctx, "delete message"):
+        return refusal
+    message = ctx.deps.message
+    if not common.is_explicit_reply(message) or not message.reply_to_message:
+        return "Cannot delete a message without an explicit reply to the exact target message."
+
+    target_message_id = message.reply_to_message.id
+    chat_id = ctx.deps.chat_id
+    try:
+        await ctx.deps.client.delete_messages(chat_id, target_message_id)
+    except RPCError as e:
+        logger.warning(
+            f"Failed to delete message {target_message_id} in chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+        return f"Failed to delete message {target_message_id}: {e.__class__.__name__}. The bot may lack delete permissions."
+
+    logger.warning(
+        f"Agent deleted message {target_message_id} in chat {chat_id}; "
+        f"requested by {ctx.deps.user_id}; reason: {reason!r}"
+    )
+    return f"Message {target_message_id} has been deleted."
+
+
 async def mute_user(
     ctx: RunContext[datatype.ContextDeps],
     user_id: int | None = None,
     target: str = "",
-    duration_minutes: int = 10,
+    duration_seconds: int = 0,
+    duration_minutes: int = 0,
+    duration_hours: int = 0,
+    duration_days: int = 0,
+    permanent: bool = False,
     reason: str = "",
 ) -> str:
-    """Mute a Telegram user in the current group for a limited duration.
+    """Mute a Telegram user for an exact duration or permanently.
 
     Args:
         user_id: Telegram user ID when known.
-        target: Optional @username, tg://user link, numeric ID, display name, or "me" for a user's self-mute request. If omitted while replying to a user's message, the replied user is used.
-        duration_minutes: Mute duration in minutes.
+        target: Optional @username, tg://user link, numeric ID, display name, or "me". If omitted while replying to a user's message, the replied user is used.
+        duration_seconds: Additional seconds in the requested mute duration.
+        duration_minutes: Additional minutes in the requested mute duration.
+        duration_hours: Additional hours in the requested mute duration.
+        duration_days: Additional days in the requested mute duration. There is no seven-day cap.
+        permanent: True for an explicit indefinite mute. A request with no duration also defaults to permanent.
         reason: Brief reason for muting this user. Do not guess the target when unsure.
     """
     user_id, _, refusal = await _resolve_checked_target_member(ctx, user_id, target, "mute")
     if refusal or user_id is None:
         return refusal
 
-    duration_minutes = max(1, min(10080, duration_minutes))
-    until_date = datetime.now(UTC) + timedelta(minutes=duration_minutes)
+    try:
+        total_seconds = _mute_duration_seconds(
+            int(duration_seconds or 0),
+            int(duration_minutes or 0),
+            int(duration_hours or 0),
+            int(duration_days or 0),
+        )
+    except (TypeError, ValueError) as e:
+        return f"Invalid mute duration: {e}"
+
+    if permanent and total_seconds:
+        return "Choose either a timed mute or a permanent mute, not both."
+    if total_seconds == 0:
+        permanent = True
+
     chat_id = ctx.deps.chat_id
+    job_id = _mute_job_id(chat_id, user_id)
+    common.jobqueue.remove_job(job_id)
+    until_date = None if permanent else datetime.now(UTC) + timedelta(seconds=total_seconds)
     try:
         await ctx.deps.client.restrict_chat_member(
             chat_id,
@@ -492,17 +599,40 @@ async def mute_user(
             permissions=ChatPermissions(),
             until_date=until_date,
         )
+        if not permanent:
+            common.jobqueue.add_onetime_job(
+                job_id,
+                func=_scheduled_unmute_job,
+                run_date=until_date,
+                args=[chat_id, user_id],
+                misfire_grace_time=10 * 365 * 24 * 3600,
+            )
     except RPCError as e:
         logger.warning(
             f"Failed to mute user {user_id} in chat {chat_id}: {e.__class__.__name__}: {e}"
         )
         return f"Failed to mute user {user_id}: {e.__class__.__name__}. The bot may lack restrict permissions."
+    except Exception as e:
+        logger.warning(
+            f"Failed to schedule mute for user {user_id} in chat {chat_id}: "
+            f"{e.__class__.__name__}: {e}"
+        )
+        try:
+            await ctx.deps.client.restrict_chat_member(
+                chat_id,
+                user_id,
+                permissions=_unmute_permissions(),
+            )
+        except Exception:
+            pass
+        return f"Failed to schedule the mute: {e.__class__.__name__}. The restriction was rolled back."
 
+    duration_text = "permanently" if permanent else f"for {_describe_duration(total_seconds)}"
     logger.warning(
-        f"Agent muted user {user_id} in chat {chat_id} for {duration_minutes} minutes; "
+        f"Agent muted user {user_id} in chat {chat_id} {duration_text}; "
         f"requested by {ctx.deps.user_id}; reason: {reason!r}"
     )
-    return f"User {user_id} has been muted for {duration_minutes} minutes."
+    return f"User {user_id} has been muted {duration_text}."
 
 
 async def unban_user(
@@ -564,6 +694,7 @@ async def unmute_user(
         return refusal
 
     chat_id = ctx.deps.chat_id
+    common.jobqueue.remove_job(_mute_job_id(chat_id, user_id))
     try:
         await ctx.deps.client.restrict_chat_member(
             chat_id,

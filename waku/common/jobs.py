@@ -43,6 +43,7 @@ class _TaskScheduler:
         args: list | None = None,
         kwargs: dict | None = None,
         replace_existing: bool = True,
+        misfire_grace_time: int = 60,
     ) -> Job:
         """添加任务，如果持久化失败则回退到内存存储
 
@@ -67,7 +68,7 @@ class _TaskScheduler:
                 kwargs=kwargs or {},
                 replace_existing=replace_existing,
                 jobstore="default",
-                misfire_grace_time=60,
+                misfire_grace_time=misfire_grace_time,
                 coalesce=True,
             )
             return job
@@ -86,7 +87,7 @@ class _TaskScheduler:
                     kwargs=kwargs or {},
                     replace_existing=replace_existing,
                     jobstore="memory",
-                    misfire_grace_time=60,
+                    misfire_grace_time=misfire_grace_time,
                     coalesce=True,
                 )
                 logger.info(
@@ -132,6 +133,7 @@ class _TaskScheduler:
         args: list | None = None,
         kwargs: dict | None = None,
         replace_existing: bool = True,
+        misfire_grace_time: int = 60,
     ) -> Job:
         """添加一次性任务
 
@@ -156,6 +158,7 @@ class _TaskScheduler:
             args=args,
             kwargs=kwargs,
             replace_existing=replace_existing,
+            misfire_grace_time=misfire_grace_time,
         )
 
     def add_interval_job(
