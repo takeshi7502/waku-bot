@@ -45,21 +45,12 @@ class _AppConfig(pydantic.BaseModel):
     health_check_host: str = "localhost"
     health_check_port: int = 8180
 
-    # Optional Discord bridge. Disabled by default and isolated from Telegram.
+    # Discord bot deployment settings. Runtime tuning lives in waku.discordbot.
     discord_enabled: bool = False
     discord_token: str = ""
     discord_keywords: list[str] | None = None
     discord_channel_allowlist: list[int] = []
-    discord_members_intent: bool = True
-    discord_command_prefix: str = "!"
     discord_admin_users: list[int] = []
-    discord_suppress_scheduler_warnings: bool = True
-    discord_message_history_limit: int = 20
-    discord_reply_max_messages: int = 7
-    discord_reply_delay_min: float = 0.7
-    discord_reply_delay_max: float = 3.0
-    discord_agent_max_concurrent: int = 2
-    discord_agent_busy_timeout: float = 20.0
 
     # external services
     redis: bool = False

@@ -17,7 +17,7 @@ from waku.config import app_config
 from waku.database import db
 from waku.health import start_health_server, stop_health_server
 from waku.logger import logger
-from waku.plugins.discord_chat import start_discord_bot, stop_discord_bot
+from waku.discordbot import start_discord_bot, stop_discord_bot
 from waku.plugins.reload import complete_pending_reload_status
 from waku.version import runtime_info_text
 

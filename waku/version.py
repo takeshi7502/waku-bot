@@ -26,16 +26,9 @@ def _discord_status() -> str:
     if not app_config.discord_token:
         return "disabled"
     try:
-        from waku.plugins import discord_chat
+        from waku.discordbot import get_discord_runtime_status
 
-        client = discord_chat._discord_client
-        if client is not None and client.is_ready():
-            user = client.user
-            return f"ready as {user}" if user else "ready"
-        task = discord_chat._discord_task
-        if task is not None and not task.done():
-            return "connecting"
-        return "offline"
+        return get_discord_runtime_status()
     except Exception:
         return "unknown"
 
