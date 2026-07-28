@@ -99,6 +99,4 @@ async def system_info() -> dict[str, object]:
 
 
 def _available_locales() -> list[str]:
-    from waku.i18n import i18n
-
-    return i18n.get_available_locales()
+    return ["vi-VN", "en"]

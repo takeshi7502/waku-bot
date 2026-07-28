@@ -12,13 +12,9 @@
  */
 
 const DISPLAY_NAMES: Record<string, string> = {
-  "zh-CN": "τ«ÇΣ╜ôΣ╕¡µûç",
-  "zh-Hant": "τ╣üΘ½öΣ╕¡µûç",
+  "vi-VN": "Tiếng Việt",
+  vi: "Tiếng Việt",
   en: "English",
-  "ja-JP": "µùÑµ£¼Φ¬₧",
-  "ko-KR": "φò£Ω╡¡∞û┤",
-  Martian: "τü½µÿƒµûç",
-  "≡ƒñ¬": "≡ƒñ¬",
 };
 
 /** The name to show for a locale tag. */

@@ -10,16 +10,17 @@
 import { computed, ref } from "vue";
 
 import en from "./en.json";
-import zhCN from "./zh-CN.json";
+import viVN from "./vi-VN.json";
 
 type Messages = Record<string, unknown>;
 
 const CATALOGUES: Record<string, Messages> = {
-  "zh-CN": zhCN,
+  "vi-VN": viVN,
+  vi: viVN,
   en,
 };
 
-const FALLBACK_LOCALE = "zh-CN";
+const FALLBACK_LOCALE = "en";
 
 const currentLocale = ref(FALLBACK_LOCALE);
 
@@ -37,8 +38,8 @@ export function setLocale(value: string): void {
     currentLocale.value = value;
     return;
   }
-  if (value.startsWith("zh")) {
-    currentLocale.value = "zh-CN";
+  if (value.startsWith("vi")) {
+    currentLocale.value = "vi-VN";
     return;
   }
   if (value.startsWith("en")) {

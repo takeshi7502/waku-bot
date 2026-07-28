@@ -41,7 +41,7 @@ const profile = useAsyncData(async () => {
   return me;
 });
 
-const form = useDirtyState({ lang: "zh-CN", waifu_mention: false });
+const form = useDirtyState({ lang: "vi-VN", waifu_mention: false });
 
 // The bot may ship locales the panel has no catalogue for; offer what the bot
 // accepts and let the i18n layer fall back for the ones it does not know.
