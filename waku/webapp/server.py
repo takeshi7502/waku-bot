@@ -14,7 +14,6 @@ import asyncio
 
 import uvicorn
 
-from waku.common.utils import spawn
 from waku.config import _legacy_health_keys_used, app_config
 from waku.logger import logger
 from waku.webapp import create_app
@@ -62,7 +61,7 @@ class WebAppServer:
             server.install_signal_handlers = False
 
             self._server = server
-            self._task = spawn(server.serve(), name="webapp-server")
+            self._task = asyncio.create_task(server.serve(), name="webapp-server")
             await self._wait_until_started(server)
         except Exception as e:
             logger.opt(exception=e).error("webapp: failed to start HTTP server")
