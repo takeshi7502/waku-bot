@@ -104,6 +104,23 @@ async def get_association(
     return await session.get(UserChatAssociation, (user_id, chat_id))
 
 
+@with_session
+async def get_user_chats(
+    user_id: int, session: AsyncSession | None = None
+) -> list[tuple[ChatData, bool]]:
+    """Return chats associated with a user and whether they are a bot admin there."""
+    assert session is not None
+
+    stmt = (
+        sqlalchemy.select(ChatData, UserChatAssociation.is_bot_admin)
+        .join(UserChatAssociation, UserChatAssociation.chat_id == ChatData.id)
+        .where(UserChatAssociation.user_id == user_id)
+        .order_by(ChatData.updated_at.desc(), ChatData.id.desc())
+    )
+    result = await session.execute(stmt)
+    return [(chat, bool(is_bot_admin)) for chat, is_bot_admin in result.all()]
+
+
 @with_tx
 async def update_association(
     association: UserChatAssociation,

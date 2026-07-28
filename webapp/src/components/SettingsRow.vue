@@ -118,6 +118,6 @@ function onActivate(): void {
       geometry, so nothing reflows when the action starts or finishes.
     -->
     <ActivityDot v-if="busy" class="shrink-0" />
-    <span v-else-if="navigable" class="text-hint shrink-0 text-sub" aria-hidden="true">ΓÇ║</span>
+    <span v-else-if="navigable" class="text-hint shrink-0 text-sub" aria-hidden="true">›</span>
   </component>
 </template>
