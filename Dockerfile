@@ -23,7 +23,7 @@ COPY pyproject.toml uv.lock ./
 
 RUN uv sync --frozen --no-dev && \
     uv pip install pip && \
-    apt-get purge -y --auto-remove gcc g++ make build-essential git
+    apt-get purge -y --auto-remove gcc g++ make build-essential
 
 COPY . .
 
