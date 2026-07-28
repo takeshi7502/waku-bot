@@ -12,6 +12,22 @@ timezone = "Asia/Ho_Chi_Minh"
 bot_keywords = ["waku"]
 health_check_enabled = true
 
+# Telegram Mini App / Waku Panel
+# Cần tạo Mini App trong BotFather và đặt webapp_url là URL HTTPS public.
+webapp = true
+webapp_host = "0.0.0.0"
+webapp_port = 8180
+webapp_url = "https://your-domain.example"
+webapp_short_name = "panel"
+webapp_menu_button = true
+webapp_jwt_secret = "" # để trống sẽ tự derive từ bot token
+webapp_jwt_ttl = 21600
+webapp_initdata_ttl = 300
+webapp_allow_origins = [] # chỉ dùng cho dev frontend origin, ví dụ ["http://localhost:5173"]
+webapp_trusted_proxies = ["127.0.0.1", "::1"]
+webapp_static_dir = ""
+webapp_admin_edit_user = true
+
 #######################################################################
 
 discord_enabled = false

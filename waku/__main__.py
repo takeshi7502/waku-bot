@@ -15,11 +15,11 @@ from waku.bot import jobs
 from waku.bot.client import client
 from waku.config import app_config
 from waku.database import db
-from waku.health import start_health_server, stop_health_server
-from waku.logger import logger
 from waku.discordbot import start_discord_bot, stop_discord_bot
+from waku.logger import logger
 from waku.plugins.reload import complete_pending_reload_status
 from waku.version import runtime_info_text
+from waku.webapp.server import server as webapp_server
 
 
 def _get_commands_hash(commands_dict: dict[str, list[BotCommand]]) -> str:
@@ -251,6 +251,7 @@ async def stop_bot(client: Client = client):
             logger.warning(f"Error closing code repository: {e}")
 
     await stop_discord_bot()
+    await webapp_server.stop()
     common.jobqueue.shutdown()
     await db.close_db()
     logger.success(i18n.t("log.exit", locale=app_config.lang))
@@ -260,21 +261,10 @@ async def main():
     logger.info("\n" + runtime_info_text())
     await db.init_db()
 
-    # Start health check server
-    health_runner = None
-    if app_config.health_check_enabled:
-        health_runner = await start_health_server(
-            host=app_config.health_check_host,
-            port=app_config.health_check_port,
-        )
-
+    await webapp_server.start()
     await client.start()
     await idle()
     await client.stop()  # type: ignore
-
-    # Stop health check server
-    if health_runner:
-        await stop_health_server(health_runner)
 
 
 if __name__ == "__main__":

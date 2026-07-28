@@ -45,6 +45,21 @@ class _AppConfig(pydantic.BaseModel):
     health_check_host: str = "localhost"
     health_check_port: int = 8180
 
+    # Telegram Mini App management panel. The webapp server also serves /health and /ready.
+    webapp: bool = False
+    webapp_host: str = "0.0.0.0"
+    webapp_port: int = 8180
+    webapp_url: str = ""
+    webapp_short_name: str = "panel"
+    webapp_menu_button: bool = True
+    webapp_jwt_secret: str = ""
+    webapp_jwt_ttl: int = 21600
+    webapp_initdata_ttl: int = 300
+    webapp_allow_origins: list[str] = []
+    webapp_trusted_proxies: list[str] = ["127.0.0.1", "::1"]
+    webapp_static_dir: str = ""
+    webapp_admin_edit_user: bool = True
+
     # Discord bot deployment settings. Runtime tuning lives in waku.discordbot.
     discord_enabled: bool = False
     discord_token: str = ""
@@ -264,6 +279,8 @@ _settings = Dynaconf(
     ],
     environments=False,
 )
+
+_legacy_health_keys_used: list[str] = []
 
 app_config = _get_typed_config(_AppConfig)
 

@@ -9,10 +9,12 @@ from pyrogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 
 from waku import common, consts, database, i18n
 from waku.common.memory_store import memttlcache
+from waku.config import app_config
 from waku.logger import logger
 
 _BOTTLE_MSG_PREFIX = "bottle_msg:"
@@ -23,33 +25,42 @@ class PrivateStartBotMarkup:
         self.lang = lang
 
     def build(self) -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
+        rows = [
             [
+                InlineKeyboardButton(
+                    i18n.t("bot.button.repo", locale=self.lang),
+                    url=consts.REPO_URL,
+                ),
+                InlineKeyboardButton(
+                    i18n.t("bot.button.docs", locale=self.lang),
+                    url=consts.DOCS_URL,
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    i18n.t("bot.button.user_waifu", locale=self.lang),
+                    callback_data="user_waifu_manage",
+                ),
+                InlineKeyboardButton(
+                    i18n.t("bot.button.user_quote", locale=self.lang),
+                    callback_data="user_quote_manage",
+                ),
+            ],
+            [
+                InlineKeyboardButton("Đóng", callback_data="delete_callback_query_message"),
+            ],
+        ]
+        if app_config.webapp and app_config.webapp_url:
+            rows.insert(
+                0,
                 [
                     InlineKeyboardButton(
-                        i18n.t("bot.button.repo", locale=self.lang),
-                        url=consts.REPO_URL,
-                    ),
-                    InlineKeyboardButton(
-                        i18n.t("bot.button.docs", locale=self.lang),
-                        url=consts.DOCS_URL,
-                    ),
+                        "⚙️ Waku Panel",
+                        web_app=WebAppInfo(url=app_config.webapp_url),
+                    )
                 ],
-                [
-                    InlineKeyboardButton(
-                        i18n.t("bot.button.user_waifu", locale=self.lang),
-                        callback_data="user_waifu_manage",
-                    ),
-                    InlineKeyboardButton(
-                        i18n.t("bot.button.user_quote", locale=self.lang),
-                        callback_data="user_quote_manage",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton("Đóng", callback_data="delete_callback_query_message"),
-                ],
-            ]
-        )
+            )
+        return InlineKeyboardMarkup(rows)
 
 
 @Client.on_message(filters.command("start") & filters.private, group=0)

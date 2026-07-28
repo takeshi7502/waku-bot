@@ -1,16 +1,40 @@
-__pycache__
-*test*
-*venv*
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+.env
+.env.*
+
+# Logs and runtime data
 *.log
-tmp/
 logs/
+tmp/
+data/**
 pgdata/
-.idea
-.vscode
+pgload/
+.agentfs
+
+# Local configuration and secrets
 settings.toml
 settings.dev*
-data/**
 .secret*
-pgload/
+
+# IDE
+.idea/
+.vscode/
+
+# Frontend / Node
+node_modules/
+webapp/node_modules/
+webapp/dist/
+.node/
+
+# Test/runtime scratch artifacts
 test.*
-.agentfs
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
