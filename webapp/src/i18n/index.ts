@@ -20,7 +20,7 @@ const CATALOGUES: Record<string, Messages> = {
   en,
 };
 
-const FALLBACK_LOCALE = "en";
+const FALLBACK_LOCALE = "vi-VN";
 
 const currentLocale = ref(FALLBACK_LOCALE);
 
@@ -29,9 +29,9 @@ export const locale = computed(() => currentLocale.value);
 /**
  * Point the UI at a locale.
  *
- * waku ships locales the panel does not (Martian, zh-Hant and friends), so an
- * unknown value falls back rather than emptying the interface. `zh-Hant` is mapped
- * to `zh-CN` because it is far closer than English.
+ * waku may store locales the Mini App does not expose, so an unknown value falls
+ * back rather than emptying the interface. Vietnamese is the default, English is
+ * the only secondary locale exposed in the panel.
  */
 export function setLocale(value: string): void {
   if (value in CATALOGUES) {
@@ -82,7 +82,8 @@ export function tOptional(path: string): string | undefined {
   const active = CATALOGUES[currentLocale.value];
   const fallback = CATALOGUES[FALLBACK_LOCALE];
   return (
-    (active ? lookup(active, path) : undefined) ?? (fallback ? lookup(fallback, path) : undefined)
+    (active ? lookup(active, path) : undefined) ??
+    (fallback ? lookup(fallback, path) : undefined)
   );
 }
 

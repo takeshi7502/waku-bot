@@ -21,7 +21,9 @@ _CHAT_CONFIG_CACHE_PREFIX = "chat_config:"
 
 
 def _is_telegram_chat(chat: ChatData) -> bool:
-    """Exclude Discord bridge pseudo-chats from Telegram Mini App data."""
+    """Exclude Discord bridge pseudo-chats and non-Telegram pseudo servers."""
+    if chat.id >= 0:
+        return False
     if chat.title.startswith("Discord DM "):
         return False
     try:

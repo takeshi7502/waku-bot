@@ -1,5 +1,5 @@
 /**
- * Transient feedback: "σ╖▓Σ┐¥σ¡ÿ", "σñ┤σâÅσ╖▓σê╖µû░", and the failures that pair with them.
+ * Transient feedback: "σ╖▓Σ┐¥σ¡ÿ", "Avatar refreshed", and the failures that pair with them.
  *
  * State lives at module scope rather than in a component or a Pinia store, because a
  * notice outlives the action that raised it and belongs to no single page: a save on

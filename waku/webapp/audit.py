@@ -45,7 +45,7 @@ class SkippedField:
 
 def _trim(value: Any) -> Any:
     if isinstance(value, str) and len(value) > _MAX_VALUE_LEN:
-        return value[:_MAX_VALUE_LEN] + "ΓÇª"
+        return value[:_MAX_VALUE_LEN] + "\u2026"
     return value
 
 

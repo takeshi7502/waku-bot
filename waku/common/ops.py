@@ -175,7 +175,7 @@ async def divorce_user(user_id: int) -> DivorceResult:
 async def collect_stats() -> dict[str, object]:
     """Aggregate the counters the /status command and the panel both show."""
     return {
-        "users": await database.count_users(),
+        "users": await database.count_telegram_users(),
         "chats": await database.count_chats(),
         "quotes": await database.count_telegram_quotes(),
         "associations": await database.count_telegram_associations(),

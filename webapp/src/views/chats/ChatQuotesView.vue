@@ -107,7 +107,7 @@ async function remove(quote: Quote): Promise<void> {
         v-for="quote in items"
         :key="quote.link"
         :label="preview(quote)"
-        :hint="`${quote.user_name ?? quote.user_id} ┬╖ ${formatDate(quote.created_at)}`"
+        :hint="`${quote.user_name ?? quote.user_id} \u00B7 ${formatDate(quote.created_at)}`"
         :value="t('app.delete')"
         navigable
         destructive

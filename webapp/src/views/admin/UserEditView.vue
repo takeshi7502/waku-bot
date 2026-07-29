@@ -170,7 +170,7 @@ async function save(): Promise<void> {
     if (result.skipped.length) {
       parts.push(t("admin.changesSkipped", { count: result.skipped.length }));
     }
-    notify(parts.join(" ┬╖ "));
+    notify(parts.join(" \u00B7 "));
     haptics.success();
   } catch (error) {
     notifyError(isApiError(error) ? tError(error.code) : t("app.loadFailed"));

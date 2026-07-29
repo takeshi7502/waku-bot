@@ -415,3 +415,24 @@ async def get_users_page(
     )
     rows = (await session.execute(stmt)).scalars().all()
     return PageResult(items=list(rows), total=total, page=page, size=size)
+
+
+@with_session
+async def count_telegram_users(session: AsyncSession | None = None) -> int:
+    """Count distinct users seen in Telegram group chats only."""
+    assert session is not None
+    from .models import ChatData
+
+    stmt = (
+        sqlalchemy.select(UserData.id, ChatData)
+        .join(UserChatAssociation, UserChatAssociation.user_id == UserData.id)
+        .join(ChatData, UserChatAssociation.chat_id == ChatData.id)
+        .where(UserData.is_real_user.is_(True), ChatData.id < 0)
+    )
+    result = await session.execute(stmt)
+    user_ids = {
+        user_id
+        for user_id, chat in result.all()
+        if not chat.title.startswith("Discord DM ") and not chat.chat_config.discord_enabled
+    }
+    return len(user_ids)

@@ -268,4 +268,4 @@ async def count_telegram_quotes(session: AsyncSession | None = None) -> int:
     assert session is not None
     stmt = sqlalchemy.select(Quote, ChatData).join(ChatData, Quote.chat_id == ChatData.id)
     result = await session.execute(stmt)
-    return sum(1 for _quote, chat in result.all() if not chat.title.startswith("Discord DM ") and not chat.chat_config.discord_enabled)
+    return sum(1 for _quote, chat in result.all() if chat.id < 0 and not chat.title.startswith("Discord DM ") and not chat.chat_config.discord_enabled)

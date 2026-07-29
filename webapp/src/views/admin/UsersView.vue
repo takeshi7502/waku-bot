@@ -52,7 +52,7 @@ function badges(user: (typeof items.value)[number]): string {
   if (user.is_bot_global_admin) flags.push(t("admin.globalAdmin"));
   if (user.is_bot) flags.push(t("admin.isBot"));
   else if (!user.is_real_user) flags.push(t("admin.notRealUser"));
-  return flags.join(" ┬╖ ");
+  return flags.join(" \u00B7 ");
 }
 </script>
 

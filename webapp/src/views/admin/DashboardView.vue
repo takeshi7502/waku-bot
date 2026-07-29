@@ -47,7 +47,7 @@ const affection = computed<DefinitionItem[]>(() => {
   if (data.min_bucket !== undefined && data.max_bucket !== undefined) {
     items.push({
       label: t("admin.affectionRange"),
-      value: `${data.min_bucket} ΓÇª ${data.max_bucket}`,
+      value: `${data.min_bucket} \u2026 ${data.max_bucket}`,
       mono: true,
     });
   }

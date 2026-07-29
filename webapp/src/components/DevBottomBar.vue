@@ -26,7 +26,7 @@ import {
 <template>
   <div class="border-line bg-surface fixed inset-x-0 bottom-0 z-50 border-t" data-dev-bottom-bar>
     <p class="text-hint px-related pt-1 text-center font-mono text-[11px]">
-      dev ┬╖ Telegram σÄƒτöƒµîëΘÆ«µ¿íµïƒ
+      dev \u00B7 Telegram native button simulation
     </p>
 
     <div class="flex items-center gap-tight p-tight">
@@ -36,7 +36,7 @@ import {
         class="border-line shrink-0 border px-3 py-2 text-sub"
         @click="backButtonHandler?.()"
       >
-        ΓÇ╣
+        <
       </button>
 
       <button
@@ -58,7 +58,7 @@ import {
         :class="mainButtonState.enabled ? '' : 'opacity-40'"
         @click="mainButtonHandler?.()"
       >
-        {{ mainButtonState.loading ? "ΓÇª" : mainButtonState.text }}
+        {{ mainButtonState.loading ? "\u2026" : mainButtonState.text }}
       </button>
 
       <span

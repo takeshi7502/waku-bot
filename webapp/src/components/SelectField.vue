@@ -66,7 +66,7 @@ const inputId = `select-${Math.random().toString(36).slice(2, 9)}`;
           {{ option.text }}
         </option>
       </select>
-      <span class="field-select-chevron text-note" aria-hidden="true">Γîä</span>
+      <span class="field-select-chevron text-note" aria-hidden="true">\u2304</span>
     </div>
   </div>
 </template>

@@ -649,4 +649,4 @@ async def count_telegram_associations(session: AsyncSession | None = None) -> in
         UserChatAssociation, UserChatAssociation.chat_id == ChatData.id
     )
     result = await session.execute(stmt)
-    return sum(1 for chat, _assoc in result.all() if not chat.title.startswith("Discord DM ") and not chat.chat_config.discord_enabled)
+    return sum(1 for chat, _assoc in result.all() if chat.id < 0 and not chat.title.startswith("Discord DM ") and not chat.chat_config.discord_enabled)

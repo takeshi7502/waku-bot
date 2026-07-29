@@ -72,7 +72,7 @@ const providers = computed<DefinitionItem[]>(() => {
   if (!data) return [];
   return Object.entries(data.agent_providers).map(([name, provider]) => ({
     label: name,
-    value: `${provider.url ?? "-"} ┬╖ ${
+    value: `${provider.url ?? "-"} \u00B7 ${
       provider.key === null ? t("admin.notConfigured") : t("admin.configured")
     }`,
     mono: true,

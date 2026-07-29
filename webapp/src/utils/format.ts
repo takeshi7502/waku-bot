@@ -41,5 +41,5 @@ export function formatDate(iso: string): string {
 /** Collapse whitespace and cut to length, for list previews. */
 export function truncate(text: string, length = 80): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
-  return collapsed.length > length ? `${collapsed.slice(0, length)}ΓÇª` : collapsed;
+  return collapsed.length > length ? `${collapsed.slice(0, length)}\u2026` : collapsed;
 }
