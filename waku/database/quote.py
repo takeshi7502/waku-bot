@@ -195,3 +195,68 @@ async def get_chat_quotes(
     )
     result = await session.execute(stmt)
     return result.scalars().all()
+
+from dataclasses import dataclass as _dataclass
+
+@_dataclass(slots=True)
+class PageResult:
+    items: list
+    total: int
+    page: int
+    size: int
+
+
+@with_session
+async def get_user_quotes_paged(
+    user_id: int,
+    page: int = 1,
+    size: int = 20,
+    session: AsyncSession | None = None,
+) -> PageResult:
+    assert session is not None
+    conditions = [Quote.user_id == user_id]
+    total_stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(Quote).where(*conditions)
+    total = (await session.execute(total_stmt)).scalar_one() or 0
+    stmt = (
+        sqlalchemy.select(Quote)
+        .options(sqlalchemy.orm.selectinload(Quote.user))
+        .where(*conditions)
+        .order_by(Quote.created_at.desc(), Quote.link.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return PageResult(items=list(rows), total=total, page=page, size=size)
+
+
+@with_session
+async def get_chat_quotes_paged(
+    chat_id: int,
+    page: int = 1,
+    size: int = 20,
+    query: str = '',
+    session: AsyncSession | None = None,
+) -> PageResult:
+    assert session is not None
+    conditions = [Quote.chat_id == chat_id]
+    if query:
+        conditions.append(_build_text_search_condition(query))
+    total_stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(Quote).where(*conditions)
+    total = (await session.execute(total_stmt)).scalar_one() or 0
+    stmt = (
+        sqlalchemy.select(Quote)
+        .options(sqlalchemy.orm.selectinload(Quote.user))
+        .where(*conditions)
+        .order_by(Quote.created_at.desc(), Quote.link.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return PageResult(items=list(rows), total=total, page=page, size=size)
+
+
+@with_session
+async def count_chat_quotes(chat_id: int, session: AsyncSession | None = None) -> int:
+    assert session is not None
+    stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(Quote).where(Quote.chat_id == chat_id)
+    return (await session.execute(stmt)).scalar_one() or 0

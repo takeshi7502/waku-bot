@@ -359,3 +359,59 @@ async def divorce(user_id: int, session: AsyncSession | None = None):
         .values(waifu_id=None)
     )
     await session.execute(stmt)
+
+
+from dataclasses import dataclass as _dataclass
+
+@_dataclass(slots=True)
+class PageResult:
+    items: list
+    total: int
+    page: int
+    size: int
+
+
+@with_tx
+async def set_user_waifu_mention(
+    user_id: int, waifu_mention: bool, session: AsyncSession | None = None
+) -> bool:
+    assert session is not None
+    user_data = await session.get(UserData, user_id)
+    if user_data is None:
+        raise ValueError(f"User with id {user_id} not found")
+    old = bool(user_data.waifu_mention)
+    user_data.waifu_mention = waifu_mention
+    return old
+
+
+@with_session
+async def get_users_page(
+    page: int = 1,
+    size: int = 20,
+    query: str = "",
+    only_real: bool = False,
+    session: AsyncSession | None = None,
+) -> PageResult:
+    assert session is not None
+    conditions = []
+    if only_real:
+        conditions.append(UserData.is_real_user.is_(True))
+    if query:
+        pattern = f"%{query}%"
+        query_conditions = [UserData.full_name.ilike(pattern), UserData.username.ilike(pattern)]
+        try:
+            query_conditions.append(UserData.id == int(query))
+        except ValueError:
+            pass
+        conditions.append(sqlalchemy.or_(*query_conditions))
+    total_stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(UserData).where(*conditions)
+    total = (await session.execute(total_stmt)).scalar_one() or 0
+    stmt = (
+        sqlalchemy.select(UserData)
+        .where(*conditions)
+        .order_by(UserData.updated_at.desc(), UserData.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return PageResult(items=list(rows), total=total, page=page, size=size)

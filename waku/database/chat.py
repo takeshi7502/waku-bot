@@ -230,3 +230,61 @@ async def update_chat_config(
     )
 
     return chat_data.chat_config
+
+
+from dataclasses import dataclass as _dataclass
+from .models import UserChatAssociation, Quote
+
+@_dataclass(slots=True)
+class PageResult:
+    items: list
+    total: int
+    page: int
+    size: int
+
+
+@with_session
+async def get_chats_page(
+    page: int = 1,
+    size: int = 20,
+    query: str = "",
+    session: AsyncSession | None = None,
+) -> PageResult:
+    assert session is not None
+    conditions = []
+    if query:
+        pattern = f"%{query}%"
+        query_conditions = [ChatData.title.ilike(pattern), ChatData.username.ilike(pattern)]
+        try:
+            query_conditions.append(ChatData.id == int(query))
+        except ValueError:
+            pass
+        conditions.append(sqlalchemy.or_(*query_conditions))
+    total_stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(ChatData).where(*conditions)
+    total = (await session.execute(total_stmt)).scalar_one() or 0
+    stmt = (
+        sqlalchemy.select(ChatData)
+        .where(*conditions)
+        .order_by(ChatData.updated_at.desc(), ChatData.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return PageResult(items=list(rows), total=total, page=page, size=size)
+
+
+@with_session
+async def count_chat_members(chat_id: int, session: AsyncSession | None = None) -> int:
+    assert session is not None
+    stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(UserChatAssociation).where(UserChatAssociation.chat_id == chat_id)
+    return (await session.execute(stmt)).scalar_one() or 0
+
+
+@with_tx
+async def delete_chat(chat_id: int, session: AsyncSession | None = None) -> bool:
+    assert session is not None
+    chat = await session.get(ChatData, chat_id)
+    if chat is None:
+        return False
+    await session.delete(chat)
+    return True
