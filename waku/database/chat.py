@@ -10,7 +10,7 @@ from waku.common.memory_store import memttlcache
 from waku.config import runtime_config
 
 from .db import with_session, with_tx
-from .models import ChatConfig, ChatData
+from .models import ChatConfig, ChatData, UserData
 
 # 本地内存缓存：记录已同步到 DB 的群组快照，避免每条消息触发重复 upsert
 # key: chat_id, value: (title, username)
@@ -20,13 +20,25 @@ _CHAT_CONFIG_CACHE_TTL = 300  # 5 分钟
 _CHAT_CONFIG_CACHE_PREFIX = "chat_config:"
 
 
+def _is_telegram_chat(chat: ChatData) -> bool:
+    """Exclude Discord bridge pseudo-chats from Telegram Mini App data."""
+    if chat.title.startswith("Discord DM "):
+        return False
+    try:
+        if chat.chat_config.discord_enabled:
+            return False
+    except Exception:
+        pass
+    return True
+
+
 @with_session
 async def count_chats(session: AsyncSession | None = None) -> int:
     assert session is not None
 
-    stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(ChatData)
+    stmt = sqlalchemy.select(ChatData)
     result = await session.execute(stmt)
-    return result.scalar() or 0
+    return sum(1 for chat in result.scalars().all() if _is_telegram_chat(chat))
 
 
 @with_session
@@ -260,16 +272,18 @@ async def get_chats_page(
         except ValueError:
             pass
         conditions.append(sqlalchemy.or_(*query_conditions))
-    total_stmt = sqlalchemy.select(sqlalchemy.func.count()).select_from(ChatData).where(*conditions)
-    total = (await session.execute(total_stmt)).scalar_one() or 0
     stmt = (
         sqlalchemy.select(ChatData)
         .where(*conditions)
         .order_by(ChatData.updated_at.desc(), ChatData.id.desc())
-        .offset((page - 1) * size)
-        .limit(size)
     )
-    rows = (await session.execute(stmt)).scalars().all()
+    rows_all = [
+        chat for chat in (await session.execute(stmt)).scalars().all()
+        if _is_telegram_chat(chat)
+    ]
+    total = len(rows_all)
+    start = (page - 1) * size
+    rows = rows_all[start : start + size]
     return PageResult(items=list(rows), total=total, page=page, size=size)
 
 
@@ -288,3 +302,20 @@ async def delete_chat(chat_id: int, session: AsyncSession | None = None) -> bool
         return False
     await session.delete(chat)
     return True
+
+
+@with_session
+async def get_chat_bot_admins(
+    chat_id: int, session: AsyncSession | None = None
+) -> list[tuple[UserData, int | None]]:
+    assert session is not None
+    stmt = (
+        sqlalchemy.select(UserData, UserChatAssociation.promoted_by)
+        .join(UserChatAssociation, UserChatAssociation.user_id == UserData.id)
+        .where(
+            UserChatAssociation.chat_id == chat_id,
+            UserChatAssociation.is_bot_admin.is_(True),
+        )
+        .order_by(UserData.full_name.asc(), UserData.id.asc())
+    )
+    return [(user, promoted_by) for user, promoted_by in (await session.execute(stmt)).all()]

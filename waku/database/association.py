@@ -639,3 +639,14 @@ async def clear_gay_mode_state(
     association.member_tag = restored_tag
     association.gay_mode_previous_tag = None
     association.gay_mode_applied = False
+
+
+@with_session
+async def count_telegram_associations(session: AsyncSession | None = None) -> int:
+    """Count memberships in Telegram chats only, excluding Discord bridge rows."""
+    assert session is not None
+    stmt = sqlalchemy.select(ChatData, UserChatAssociation).join(
+        UserChatAssociation, UserChatAssociation.chat_id == ChatData.id
+    )
+    result = await session.execute(stmt)
+    return sum(1 for chat, _assoc in result.all() if not chat.title.startswith("Discord DM ") and not chat.chat_config.discord_enabled)

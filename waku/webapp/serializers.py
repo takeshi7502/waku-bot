@@ -10,6 +10,51 @@ from datetime import datetime
 
 from waku.config import app_config
 from waku.database.models import ChatConfig, ChatData, Quote, UserData
+def _u(*codes: int) -> str:
+    return "".join(chr(code) for code in codes)
+
+
+_MOJIBAKE_REPLACEMENTS = {
+    _u(0x00C3, 0x00A0): _u(0x00E0),
+    _u(0x00C3, 0x00A1): _u(0x00E1),
+    _u(0x00C3, 0x00A2): _u(0x00E2),
+    _u(0x00C3, 0x00A3): _u(0x00E3),
+    _u(0x00C3, 0x00A8): _u(0x00E8),
+    _u(0x00C3, 0x00A9): _u(0x00E9),
+    _u(0x00C3, 0x00AA): _u(0x00EA),
+    _u(0x00C3, 0x00AC): _u(0x00EC),
+    _u(0x00C3, 0x00AD): _u(0x00ED),
+    _u(0x00C3, 0x00B2): _u(0x00F2),
+    _u(0x00C3, 0x00B3): _u(0x00F3),
+    _u(0x00C3, 0x00B4): _u(0x00F4),
+    _u(0x00C3, 0x00B5): _u(0x00F5),
+    _u(0x00C3, 0x00B9): _u(0x00F9),
+    _u(0x00C3, 0x00BA): _u(0x00FA),
+    _u(0x00C3, 0x00BD): _u(0x00FD),
+    _u(0x00C4, 0x2018): _u(0x0111),
+    _u(0x00C4, 0x0090): _u(0x0110),
+    _u(0x0393, 0x00C7, 0x00AA): _u(0x2026),
+    _u(0x0393, 0x00C7, 0x00B4): _u(0x2013),
+    _u(0x0393, 0x00C7, 0x00B6): _u(0x2014),
+    _u(0x0393, 0x00C7, 0x02DC): _u(0x2018),
+    _u(0x0393, 0x00C7, 0x00D6): _u(0x2019),
+    _u(0x0393, 0x00C7, 0x0153): _u(0x201C),
+    _u(0x0393, 0x00C7, 0x009D): _u(0x201D),
+    _u(0x0393, 0x00C7, 0x00B3): _u(0x2022),
+    _u(0x0393, 0x00C7, 0x00BA): _u(0x203A),
+    _u(0x00C2, 0x00A0): " ",
+    _u(0x00C2): "",
+}
+
+
+def clean_mojibake(value: str | None) -> str | None:
+    if value is None:
+        return None
+    for bad, good in _MOJIBAKE_REPLACEMENTS.items():
+        value = value.replace(bad, good)
+    return value
+
+
 from waku.webapp.schemas import (
     AdminChatOut,
     AdminUserOut,
@@ -33,16 +78,16 @@ def quote_out(quote: Quote, chat_title: str | None = None) -> QuoteOut:
     user_name: str | None = None
     loaded_user = quote.__dict__.get("user")
     if isinstance(loaded_user, UserData):
-        user_name = loaded_user.full_name
+        user_name = clean_mojibake(loaded_user.full_name)
 
     return QuoteOut(
         link=quote.link,
         chat_id=quote.chat_id,
-        chat_title=chat_title,
+        chat_title=clean_mojibake(chat_title),
         user_id=quote.user_id,
         user_name=user_name,
         message_id=quote.message_id,
-        text=quote.text,
+        text=clean_mojibake(quote.text),
         has_image=bool(quote.img),
         created_at=timestamp(quote.created_at),
     )

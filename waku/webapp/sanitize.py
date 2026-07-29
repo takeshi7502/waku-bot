@@ -133,6 +133,23 @@ _SECRET_FIELDS: tuple[str, ...] = (
 )
 
 
+def _is_secret_field(field: str) -> bool:
+    lowered = field.lower()
+    return any(marker in lowered for marker in ("token", "secret", "password", "api_key", "api_hash", "db_url", "dsn"))
+
+
+def _iter_extra_public_fields() -> dict[str, Any]:
+    known = {field for fields in _PUBLIC_FIELDS.values() for field in fields} | set(_SECRET_FIELDS)
+    extra: dict[str, Any] = {}
+    for field, value in vars(app_config).items():
+        if field.startswith("_") or field in known or field == "agent_providers":
+            continue
+        if _is_secret_field(field):
+            continue
+        extra[field] = _plain(value)
+    return dict(sorted(extra.items()))
+
+
 def _plain(value: Any) -> Any:
     """Coerce a config value into something JSON-serialisable."""
     if isinstance(value, Path):
@@ -163,9 +180,17 @@ def config_snapshot() -> dict[str, Any]:
             if hasattr(app_config, field)
         }
 
+    extra = _iter_extra_public_fields()
+    if extra:
+        groups["other"] = extra
+
+    secret_names = set(_SECRET_FIELDS)
+    for field in vars(app_config):
+        if _is_secret_field(field):
+            secret_names.add(field)
     secrets = {
         field: _secret_state(getattr(app_config, field, None))
-        for field in _SECRET_FIELDS
+        for field in sorted(secret_names)
     }
 
     # Providers: names and endpoints are useful for debugging, keys never are.

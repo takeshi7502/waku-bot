@@ -177,8 +177,8 @@ async def collect_stats() -> dict[str, object]:
     return {
         "users": await database.count_users(),
         "chats": await database.count_chats(),
-        "quotes": await database.count_quotes(),
-        "associations": await database.count_associations(),
+        "quotes": await database.count_telegram_quotes(),
+        "associations": await database.count_telegram_associations(),
         "bottles": await database.count_bottles(),
         "affection": await database.get_affection_stats(),
     }
