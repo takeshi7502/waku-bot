@@ -4,6 +4,9 @@ bot:
     private_start: |
       Nya~
       You can use /lang to change the language of the bot.
+    dm_ai_disabled: "DM chat is currently disabled by default. Open /start and turn on Chat DM if you want the bot to reply here."
+    dm_ai_toggle_enabled: "DM chat enabled."
+    dm_ai_toggle_disabled: "DM chat disabled."
     group_start: |
       Hi~
       You can use /lang to change the language of the bot in this group.
@@ -341,6 +344,8 @@ bot:
     info: Show saved bot groups
     infographic: Render infographic
   button:
+    dm_ai_on: "Chat DM: ON"
+    dm_ai_off: "Chat DM: OFF"
     back: Back
     repo: Source Code
     docs: Documentation

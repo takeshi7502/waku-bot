@@ -38,6 +38,7 @@ from .whitelist import is_chat_allowed
 
 agent = None
 model = None
+
 small_model = None
 multimodal_model = None
 struct_model = None
@@ -758,6 +759,14 @@ async def wake_agent(client: PyrogramClient, message: pyrogram.types.Message):
     if not chat or not chat.id:
         return await word_reply(client, message)
     chat_config = None
+    if chat.type == pyrogram.enums.ChatType.PRIVATE:
+        user_config = await database.get_user_config(user.id)
+        if not user_config.dm_ai_enabled:
+            if myfilter.has_wake_keyword(client, message):
+                await message.reply_text(
+                    i18n.t("bot.msg.dm_ai_disabled", locale=user_config.lang)
+                )
+            return
     if not is_chat_allowed(chat.id):
         return await word_reply(client, message)
     if chat.type == pyrogram.enums.ChatType.SUPERGROUP:
@@ -807,7 +816,7 @@ async def wake_agent(client: PyrogramClient, message: pyrogram.types.Message):
         waiting_marked = True
         # set language
         if chat.type == pyrogram.enums.ChatType.PRIVATE:
-            lang = (await database.get_user_config(user.id)).lang
+            lang = user_config.lang
         else:
             lang = (await database.get_chat_config(chat.id)).lang
 

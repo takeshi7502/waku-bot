@@ -20,12 +20,24 @@ from waku.logger import logger
 _BOTTLE_MSG_PREFIX = "bottle_msg:"
 
 
+def _webapp_url_is_telegram_compatible(url: str | None) -> bool:
+    if not url:
+        return False
+    return url.startswith("https://")
+
+
 class PrivateStartBotMarkup:
-    def __init__(self, lang: str = "zh-CN") -> None:
+    def __init__(self, lang: str = "zh-CN", dm_ai_enabled: bool = False) -> None:
         self.lang = lang
+        self.dm_ai_enabled = dm_ai_enabled
 
     def build(self) -> InlineKeyboardMarkup:
+        dm_label = i18n.t(
+            "bot.button.dm_ai_on" if self.dm_ai_enabled else "bot.button.dm_ai_off",
+            locale=self.lang,
+        )
         rows = [
+            [InlineKeyboardButton(dm_label, callback_data="toggle_dm_ai")],
             [
                 InlineKeyboardButton(
                     i18n.t("bot.button.repo", locale=self.lang),
@@ -50,7 +62,7 @@ class PrivateStartBotMarkup:
                 InlineKeyboardButton("Đóng", callback_data="delete_callback_query_message"),
             ],
         ]
-        if app_config.webapp and app_config.webapp_url:
+        if app_config.webapp and _webapp_url_is_telegram_compatible(app_config.webapp_url):
             rows.insert(
                 0,
                 [
@@ -72,7 +84,7 @@ async def start(client: Client, message: Message):
     if len(message.command) <= 1:
         await message.reply(
             text=i18n.t("bot.msg.private_start", locale=lang),
-            reply_markup=PrivateStartBotMarkup(lang).build(),
+            reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
         )
         return
     cmd = message.command[1]
@@ -86,7 +98,7 @@ async def start(client: Client, message: Message):
         if len(cmd.split("_")) != 3:
             await message.reply(
                 text=i18n.t("bot.msg.private_start", locale=lang),
-                reply_markup=PrivateStartBotMarkup(lang).build(),
+                reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
             )
             return
         bottle_id = int(cmd.split("_")[2])
@@ -94,7 +106,7 @@ async def start(client: Client, message: Message):
         if bottle is None:
             await message.reply(
                 text=i18n.t("bot.msg.bottle.not_found", locale=lang),
-                reply_markup=PrivateStartBotMarkup(lang).build(),
+                reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
             )
             return
         sender_user = await database.get_user_by_id(bottle.sender_id)
@@ -129,7 +141,7 @@ async def start(client: Client, message: Message):
         if len(cmd.split("_")) != 3:
             await message.reply(
                 text=i18n.t("bot.msg.private_start", locale=lang),
-                reply_markup=PrivateStartBotMarkup(lang).build(),
+                reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
             )
             return
         bottle_id = int(cmd.split("_")[2])
@@ -137,7 +149,7 @@ async def start(client: Client, message: Message):
         if bottle is None:
             await message.reply(
                 text=i18n.t("bot.msg.bottle.not_found", locale=lang),
-                reply_markup=PrivateStartBotMarkup(lang).build(),
+                reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
             )
             return
         bot_username = client.me.username if client.me else None
@@ -234,7 +246,7 @@ async def start(client: Client, message: Message):
     else:
         await message.reply(
             text=i18n.t("bot.msg.private_start", locale=lang),
-            reply_markup=PrivateStartBotMarkup(lang).build(),
+            reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
         )
 
 
@@ -266,10 +278,29 @@ async def back_home(client: Client, callback_query: CallbackQuery):
     try:
         await callback_query.message.edit(
             text=i18n.t("bot.msg.private_start", locale=lang),
-            reply_markup=PrivateStartBotMarkup(lang).build(),
+            reply_markup=PrivateStartBotMarkup(lang, user_config.dm_ai_enabled).build(),
         )
     except Exception as e:
         logger.error(e)
+
+
+@Client.on_callback_query(filters.regex(r"^toggle_dm_ai$"))
+async def toggle_dm_ai(client: Client, callback_query: CallbackQuery):
+    user_config = await database.get_user_config(callback_query.from_user)
+    enabled = not user_config.dm_ai_enabled
+    user_config = await database.set_user_dm_ai_enabled(
+        callback_query.from_user.id, enabled
+    )
+    lang = user_config.lang
+    status_key = "bot.msg.dm_ai_toggle_enabled" if enabled else "bot.msg.dm_ai_toggle_disabled"
+    try:
+        await callback_query.message.edit(
+            text=i18n.t("bot.msg.private_start", locale=lang),
+            reply_markup=PrivateStartBotMarkup(lang, enabled).build(),
+        )
+    except Exception as e:
+        logger.error(e)
+    await callback_query.answer(i18n.t(status_key, locale=lang))
 
 
 @Client.on_callback_query(filters.regex(r"^delete_callback_query_message$"))

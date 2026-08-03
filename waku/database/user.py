@@ -228,6 +228,21 @@ async def update_user_config(
 
 
 @with_tx
+async def set_user_dm_ai_enabled(
+    user_id: int, enabled: bool, session: AsyncSession | None = None
+) -> UserConfig:
+    assert session is not None
+
+    user_data = await session.get(UserData, user_id)
+    if user_data is None:
+        raise ValueError(f"User with id {user_id} not found")
+    config = user_data.user_config
+    config.dm_ai_enabled = enabled
+    user_data.user_config = config
+    return user_data.user_config
+
+
+@with_tx
 async def update_user_avatar(
     user_id: int,
     avatar_big_id: str | None = None,

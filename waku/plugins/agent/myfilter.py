@@ -50,25 +50,21 @@ async def reply_me_filter_func(
     return True
 
 
+def has_wake_keyword(client: Client, message: pyrogram.types.Message) -> bool:
+    text = get_message_text_markdown(message) or ""
+    caption = message.caption or ""
+    haystack = f"{text}\n{caption}".casefold()
+    if any(keyword in haystack for keyword in _bot_wake_keywords()):
+        return True
+    if not client.me or not client.me.username:
+        return False
+    return client.me.username.casefold() in haystack
+
+
 async def mention_me_filter_func(
     _, client: Client, message: pyrogram.types.Message
 ) -> bool:
-    text = get_message_text_markdown(message)
-    if not text:
-        return False
-    lowered = text.casefold()
-    if any(keyword in lowered for keyword in _bot_wake_keywords()):
-        return True
-    if not client.me:
-        return False
-    username = client.me.username
-    if not username:
-        return False
-    if username in text:
-        return True
-    if message.caption and username in message.caption:
-        return True
-    return False
+    return has_wake_keyword(client, message)
 
 
 async def not_bottle_reply_filter_func(

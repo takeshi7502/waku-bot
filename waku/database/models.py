@@ -29,6 +29,7 @@ class UserConfig:
     lang: str = "vi-VN"
     affection: int = 0
     coins: int = 144 * 16
+    dm_ai_enabled: bool = False
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "UserConfig":
@@ -38,6 +39,7 @@ class UserConfig:
             lang=data.get("lang", "vi-VN"),
             coins=data.get("coins", 144 * 16),
             affection=data.get("affection", 0),
+            dm_ai_enabled=data.get("dm_ai_enabled", False),
         )
 
     def to_dict(self) -> dict:

@@ -4,6 +4,9 @@ bot:
     private_start: |
       Nya~
       Bạn có thể dùng /lang để đổi ngôn ngữ của bot.
+    dm_ai_disabled: "Chat ri\u00eang v\u1edbi bot hi\u1ec7n \u0111ang t\u1eaft m\u1eb7c \u0111\u1ecbnh. B\u1ea1n c\u00f3 th\u1ec3 b\u1eadt l\u1ea1i trong /start n\u1ebfu mu\u1ed1n bot tr\u1ea3 l\u1eddi \u1edf DM."
+    dm_ai_toggle_enabled: "\u0110\u00e3 b\u1eadt chat v\u1edbi bot trong DM."
+    dm_ai_toggle_disabled: "\u0110\u00e3 t\u1eaft chat v\u1edbi bot trong DM."
     group_start: |
       Hi~
       Bạn có thể dùng /lang để đổi ngôn ngữ của bot trong nhóm này.
@@ -423,6 +426,8 @@ bot:
     config: Xem và chỉnh cấu hình bot
     infographic: Render infographic
   button:
+    dm_ai_on: "Chat DM: B\u1eadt"
+    dm_ai_off: "Chat DM: T\u1eaft"
     back: Quay lại
     repo: Mã nguồn
     docs: Tài liệu

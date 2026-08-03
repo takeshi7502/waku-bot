@@ -4,6 +4,9 @@ bot:
     private_start: |
       Nya~
       /lang 명령으로 봇 언어를 변경할 수 있어요.
+    dm_ai_disabled: "DM chat is currently disabled by default. Open /start and turn on Chat DM if you want the bot to reply here."
+    dm_ai_toggle_enabled: "DM chat enabled."
+    dm_ai_toggle_disabled: "DM chat disabled."
     group_start: |
       Hi~
       이 그룹에서는 /lang 명령으로 봇 언어를 변경할 수 있어요.
@@ -275,6 +278,8 @@ bot:
     greet: 환영 메시지 설정
     help: 도움말|더보기
   button:
+    dm_ai_on: "Chat DM: ON"
+    dm_ai_off: "Chat DM: OFF"
     back: 뒤로
     repo: 소스 코드
     docs: 전체 설명서

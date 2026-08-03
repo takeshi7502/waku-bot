@@ -4,6 +4,9 @@ bot:
     private_start: |
       Nya~
       你可以使用 /lang 更改 bot 語言哦
+    dm_ai_disabled: "DM chat is currently disabled by default. Open /start and turn on Chat DM if you want the bot to reply here."
+    dm_ai_toggle_enabled: "DM chat enabled."
+    dm_ai_toggle_disabled: "DM chat disabled."
     group_start: |
       Hi~
       你可以使用 /lang 更改本群組 bot 語言哦
@@ -276,6 +279,8 @@ bot:
     greet: 設置群組歡迎語
     help: 幫助|更多功能
   button:
+    dm_ai_on: "Chat DM: ON"
+    dm_ai_off: "Chat DM: OFF"
     back: 返回
     repo: 開源倉庫
     docs: 詳細幫助
