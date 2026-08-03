@@ -18,6 +18,7 @@ from waku.plugins.agent.styling import convert_md
 _MD_SEPARATOR_RE = re.compile(r"^(?:[-*_][ \t]*){3,}$")
 
 TELEGRAM_SAFE_MESSAGE_LENGTH = 4096
+TELEGRAM_RICH_MESSAGE_LENGTH = 8192
 
 
 def _split_text_for_telegram(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LENGTH) -> list[str]:
@@ -64,7 +65,10 @@ async def reply_output(
         pyrogram.enums.ChatType.GROUP,
     )
     user = message.sender_chat or message.from_user
-    safe_text_chunks = _split_text_for_telegram(text)
+    if len(text) > TELEGRAM_SAFE_MESSAGE_LENGTH:
+        safe_text_chunks = _split_text_for_telegram(text, TELEGRAM_RICH_MESSAGE_LENGTH)
+    else:
+        safe_text_chunks = _split_text_for_telegram(text)
     lines = [line for line in text.split("\n\n") if line.strip()]
     if not lines:
         return
@@ -94,7 +98,7 @@ async def reply_output(
         chunks.append("\n".join(part))
     try:
         last_reply_msg: pyrogram.types.Message | None = None
-        if has_block:
+        if has_block or len(text) > TELEGRAM_SAFE_MESSAGE_LENGTH:
             for raw_chunk in safe_text_chunks:
                 last_reply_msg = await send_rich_reply(
                     client, message, raw_chunk
@@ -197,7 +201,10 @@ class TypingKeepAlive:
 
 class StreamingOutput:
     STREAM_EDIT_INTERVAL = 1.5
-    MAX_MESSAGE_LENGTH = TELEGRAM_SAFE_MESSAGE_LENGTH
+    # Streaming previews still use the Bot API text limit to avoid edit errors.
+    # The final response may exceed 4096 and is sent/edited as Rich Message.
+    MAX_PREVIEW_LENGTH = TELEGRAM_SAFE_MESSAGE_LENGTH
+    MAX_FINAL_MESSAGE_LENGTH = TELEGRAM_RICH_MESSAGE_LENGTH
     MAX_EDIT_COUNT = 20
     MAX_TOTAL_TIME = 120.0
 
@@ -248,7 +255,7 @@ class StreamingOutput:
             # During streaming, send plain text without entities to avoid
             # rendering partially-formed markdown. Entities applied at finalize.
             await self.reply_message.edit_text(
-                text[: self.MAX_MESSAGE_LENGTH],
+                text[: self.MAX_PREVIEW_LENGTH],
                 parse_mode=pyrogram.enums.ParseMode.DISABLED,
             )
             self._last_sent_text = text
@@ -267,8 +274,8 @@ class StreamingOutput:
             return False
         try:
             self.reply_message = await self.message.reply_text(
-                plain[: self.MAX_MESSAGE_LENGTH],
-                entities=entities,
+                plain[: self.MAX_PREVIEW_LENGTH],
+                entities=entities if len(plain) <= self.MAX_PREVIEW_LENGTH else None,
             )
         except Exception as e:
             logger.error(f"Send failed in streaming: {e}")
@@ -331,11 +338,18 @@ class StreamingOutput:
                 return
             if text != self._last_sent_text or entities:
                 try:
+                    final_chunks = _split_text_for_telegram(
+                        text, self.MAX_FINAL_MESSAGE_LENGTH
+                    )
                     self.reply_message = await edit_as_rich_message(
                         self.client,
                         self.reply_message,
-                        text[: self.MAX_MESSAGE_LENGTH],
+                        final_chunks[0],
                     )
+                    for extra_chunk in final_chunks[1:]:
+                        self.reply_message = await send_rich_reply(
+                            self.client, self.message, extra_chunk
+                        )
                     self._last_sent_text = text
                 except Exception as e:
                     logger.error(f"Error editing final message: {e}")
