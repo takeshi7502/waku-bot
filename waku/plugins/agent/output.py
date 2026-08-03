@@ -1,10 +1,12 @@
 import asyncio
 import random
+import secrets
 import re
 from datetime import datetime
 
 import pyrogram
 import pyrogram.errors
+from pyrogram import raw
 from pyrogram.client import Client as PyrogramClient
 
 from waku.common.memory_store import memttlcache
@@ -19,6 +21,7 @@ _MD_SEPARATOR_RE = re.compile(r"^(?:[-*_][ \t]*){3,}$")
 
 TELEGRAM_SAFE_MESSAGE_LENGTH = 4096
 TELEGRAM_RICH_MESSAGE_LENGTH = 8192
+_OFFICIAL_DRAFT_UNSUPPORTED_PEERS: set[int] = set()
 
 
 def _split_text_for_telegram(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LENGTH) -> list[str]:
@@ -140,6 +143,86 @@ async def reply_output(
         logger.error(f"Error replying message: {e.__class__.__name__} - {e}")
 
 
+class OfficialRichDraftStreamer:
+    """Best-effort Telegram official rich draft streaming indicator.
+
+    New Telegram clients can display this as a live AI response preview without
+    repeatedly editing a normal message. If the raw API call is unavailable or
+    rejected, callers fall back to the legacy edit-message preview path.
+    """
+
+    UPDATE_INTERVAL = 1.0
+
+    def __init__(self, client: PyrogramClient, message: pyrogram.types.Message):
+        self.client = client
+        self.message = message
+        self.current_text = ""
+        self.random_id = secrets.randbits(63)
+        self._task: asyncio.Task | None = None
+        self._stop = False
+        self.supported: bool | None = None
+
+    async def _send_draft(self) -> bool:
+        chat = self.message.chat
+        if chat is None or not self.current_text.strip():
+            return False
+        if chat.id in _OFFICIAL_DRAFT_UNSUPPORTED_PEERS:
+            self.supported = False
+            return False
+        try:
+            peer = await self.client.resolve_peer(chat.id)
+            action = raw.types.InputSendMessageRichMessageDraftAction(
+                random_id=self.random_id,
+                rich_message=raw.types.InputRichMessageMarkdown(
+                    markdown=self.current_text[:TELEGRAM_RICH_MESSAGE_LENGTH]
+                ),
+            )
+            await self.client.invoke(
+                raw.functions.messages.SetTyping(
+                    peer=peer,
+                    action=action,
+                    top_msg_id=getattr(self.message, "message_thread_id", None),
+                )
+            )
+            self.supported = True
+            return True
+        except Exception as e:
+            self.supported = False
+            if e.__class__.__name__ == "TextdraftPeerInvalid":
+                _OFFICIAL_DRAFT_UNSUPPORTED_PEERS.add(chat.id)
+            logger.debug(
+                "Official rich draft streaming unavailable; falling back to "
+                f"message edits: {e.__class__.__name__} - {e}"
+            )
+            return False
+
+    async def _loop(self):
+        while not self._stop:
+            if not await self._send_draft():
+                break
+            await asyncio.sleep(self.UPDATE_INTERVAL)
+
+    async def start(self) -> bool:
+        if self._task is not None:
+            return self.supported is not False
+        if not await self._send_draft():
+            return False
+        self._task = asyncio.create_task(self._loop())
+        return True
+
+    def update(self, text: str) -> None:
+        self.current_text = text
+
+    async def stop(self) -> None:
+        self._stop = True
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+
 class TypingKeepAlive:
     """Maintains a typing chat action for the duration of a long-running operation.
 
@@ -232,6 +315,8 @@ class StreamingOutput:
         self._start_task: asyncio.Task | None = None
         self._stop = False
         self.is_guest = bool(message.guest_query_id)
+        self.official_draft = OfficialRichDraftStreamer(client, message)
+        self._legacy_preview_started = False
 
     def _is_within_limits(self) -> bool:
         current_time = asyncio.get_event_loop().time()
@@ -313,10 +398,16 @@ class StreamingOutput:
         if self.start_time == 0.0 and self.current_text.strip():
             self.start_time = asyncio.get_event_loop().time()
             self._stop = False
+        self.official_draft.update(self.current_text)
+        if self.reply_message is None and not self._legacy_preview_started:
+            if await self.official_draft.start():
+                return
+            self._legacy_preview_started = True
             self._start_task = asyncio.create_task(self._start())
 
     async def finalize(self):
         self._stop = True
+        await self.official_draft.stop()
         if self.is_guest:
             if self.current_text:
                 from waku.plugins.agent.guest_mode import answer_guest_query
@@ -331,6 +422,9 @@ class StreamingOutput:
                 await self._edit_task
             except asyncio.CancelledError:
                 pass
+        if not self.reply_message and self.current_text:
+            await reply_output(self.client, self.message, self.current_text, deps=self.deps)
+            return
         if self.reply_message and self.current_text:
             text = self.current_text
             plain, entities = convert_md(text)

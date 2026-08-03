@@ -98,6 +98,5 @@ def runtime_info_telegram_text() -> str:
             f"• Status: <code>{info['discord_status']}</code>",
             "",
             f"<b>⚙️ Settings:</b> <code>{info['settings_path']}</code>",
-            "<i>Tin nhắn này tự xoá sau 60s.</i>",
         ]
     )

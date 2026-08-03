@@ -36,6 +36,47 @@ _PROVIDER_DEFAULTS = {
 _PENDING_EDITS: dict[int, "PendingEdit"] = {}
 _SESSIONS: dict[int, "ConfigSession"] = {}
 _DIRTY_KEYS: dict[int, set[str]] = {}
+_PENDING_PROVIDER_DELETES: dict[int, "PendingProviderDelete"] = {}
+
+
+_CONFIG_UI_TEXT = {
+    "vi-VN": {
+        "delete_provider": "\U0001f5d1 Xo\u00e1 provider",
+        "delete": "Xo\u00e1",
+        "cancel": "Hu\u1ef7",
+        "delete_confirm_title": "<b>\U0001f5d1 X\u00e1c nh\u1eadn xo\u00e1 provider</b>",
+        "delete_confirm_body": "Thao t\u00e1c n\u00e0y s\u1ebd xo\u00e1 to\u00e0n b\u1ed9 block agent_providers c\u1ee7a provider n\u00e0y kh\u1ecfi settings.toml.",
+        "delete_confirm_hint": "B\u1ea5m Xo\u00e1 \u0111\u1ec3 ti\u1ebfp t\u1ee5c ho\u1eb7c Hu\u1ef7 \u0111\u1ec3 h\u1ee7y.",
+        "provider_not_found": "Kh\u00f4ng t\u00ecm th\u1ea5y provider.",
+        "provider_missing": "Provider kh\u00f4ng t\u1ed3n t\u1ea1i",
+        "provider_deleted": "\u0110\u00e3 xo\u00e1 provider, b\u1ea5m \U0001f504 \u0111\u1ec3 \u00e1p d\u1ee5ng.",
+        "send_provider_name": "G\u1eedi t\u00ean provider m\u1edbi.",
+        "send_provider_name_hint": "G\u1eedi t\u00ean provider m\u1edbi.",
+        "send_value": "G\u1eedi gi\u00e1 tr\u1ecb m\u1edbi.",
+        "send_value_hint": "G\u1eedi gi\u00e1 tr\u1ecb m\u1edbi.",
+    },
+    "en": {
+        "delete_provider": "\U0001f5d1 Delete provider",
+        "delete": "Delete",
+        "cancel": "Cancel",
+        "delete_confirm_title": "<b>\U0001f5d1 Delete provider confirmation</b>",
+        "delete_confirm_body": "This will remove the whole agent_providers block for this provider from settings.toml.",
+        "delete_confirm_hint": "Press Delete to continue or Cancel to abort.",
+        "provider_not_found": "Provider not found.",
+        "provider_missing": "Provider does not exist",
+        "provider_deleted": "Provider deleted, press \U0001f504 to apply.",
+        "send_provider_name": "Send the new provider name.",
+        "send_provider_name_hint": "Send the new provider name.",
+        "send_value": "Send the new value.",
+        "send_value_hint": "Send the new value.",
+    },
+}
+
+
+def _cfg_t(key: str) -> str:
+    lang = getattr(app_config, "lang", "vi-VN") or "vi-VN"
+    table = _CONFIG_UI_TEXT.get(lang) or _CONFIG_UI_TEXT.get(lang.split("-", 1)[0]) or _CONFIG_UI_TEXT["en"]
+    return table.get(key, _CONFIG_UI_TEXT["en"].get(key, key))
 
 
 @dataclass(frozen=True)
@@ -72,6 +113,13 @@ class PendingEdit:
     entry: ConfigEntry | None = None
     provider: str | None = None
     expires_task: asyncio.Task | None = None
+
+
+@dataclass
+class PendingProviderDelete:
+    provider: str
+    message_id: int
+
 
 
 def _session(user_id: int) -> ConfigSession:
@@ -377,6 +425,7 @@ def _provider_markup(owner_id: int, provider: str) -> tuple[str, InlineKeyboardM
         branch = "┖" if idx == 2 else "┠"
         lines.append(f"{branch} <b>{html.escape(_entry_label(owner_id, entry))}</b> → <code>{html.escape(_mask_value(full_key, entry.value))}</code>")
     rows = _button_rows(buttons, 2)
+    rows.append([InlineKeyboardButton("🗑 Delete provider", callback_data=_cb("provider_delete", owner_id, provider))])
     rows.append(_footer_row(owner_id, _cb("group", owner_id, _group_token(owner_id, "providers"), 0)))
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
@@ -407,7 +456,29 @@ def _write_entry(entry: ConfigEntry, value: Any) -> None:
     _SETTINGS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _add_provider(provider: str) -> None:
+def _delete_provider(provider: str) -> None:
+    lines = _settings_text().splitlines()
+    table_header = f"[agent_providers.{provider}]"
+    start: int | None = None
+    end = len(lines)
+    table_re = re.compile(r"^\[[^\]]+]\s*$")
+    for index, line in enumerate(lines):
+        if line.strip() == table_header:
+            start = index
+            continue
+        if start is not None and index > start and table_re.match(line.strip()):
+            end = index
+            break
+    if start is None:
+        raise ValueError(_cfg_t("provider_missing"))
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    del lines[start:end]
+    while start < len(lines) and start > 0 and not lines[start].strip() and not lines[start - 1].strip():
+        del lines[start]
+    _SETTINGS_PATH.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
     if not re.fullmatch(r"[A-Za-z0-9_-]+", provider):
         raise ValueError("Provider name chỉ dùng chữ/số/_/-")
     _, _, providers = _parse_settings()
@@ -460,6 +531,36 @@ async def _run_reload(message: pyrogram.types.Message, owner_id: int) -> None:
     )
     await _save_pending_reload_status(message, owner_id, changed)
     asyncio.create_task(_exit_after_reload(owner_id))
+
+
+def _provider_delete_confirm_markup(owner_id: int, provider: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton(_cfg_t("delete"), callback_data=_cb("provider_delete_confirm", owner_id, provider)),
+            InlineKeyboardButton(_cfg_t("cancel"), callback_data=_cb("provider", owner_id, _provider_token(owner_id, provider))),
+        ]]
+    )
+
+
+def _provider_delete_confirm_text(provider: str) -> str:
+    return "\n".join([
+        _cfg_t("delete_confirm_title"),
+        "",
+        f"Provider: <code>{html.escape(provider)}</code>",
+        "",
+        _cfg_t("delete_confirm_body"),
+        _cfg_t("delete_confirm_hint"),
+    ])
+
+
+def _provider_token(owner_id: int, provider: str) -> str:
+    sess = _session(owner_id)
+    for token, value in sess.providers.items():
+        if value == provider:
+            return token
+    token = _token("p", len(sess.providers))
+    sess.providers[token] = provider
+    return token
 
 
 def _reload_confirm_markup(owner_id: int) -> InlineKeyboardMarkup:
@@ -550,6 +651,26 @@ async def config_callback(client: pyrogram.Client, query: pyrogram.types.Callbac
         await query.answer()
         await _edit_menu(query.message, text, markup)
         return
+    if action == "provider_delete":
+        provider = parts[3]
+        _, _, providers = _parse_settings()
+        if provider not in providers:
+            await query.answer(_cfg_t("provider_not_found"), show_alert=True)
+            return
+        await query.answer()
+        await _edit_menu(query.message, _provider_delete_confirm_text(provider), _provider_delete_confirm_markup(owner_id, provider))
+        return
+    if action == "provider_delete_confirm":
+        provider = parts[3]
+        try:
+            _delete_provider(provider)
+            _mark_dirty(owner_id, f"agent_providers.{provider}")
+            text, markup = _providers_markup(owner_id)
+            await query.answer(_cfg_t("provider_deleted"))
+            await _edit_menu(query.message, text, markup)
+        except Exception as e:
+            await query.answer(str(e), show_alert=True)
+        return
     if action == "add_provider":
         old = _PENDING_EDITS.pop(owner_id, None)
         if old and old.expires_task:
@@ -557,7 +678,7 @@ async def config_callback(client: pyrogram.Client, query: pyrogram.types.Callbac
         task = asyncio.create_task(_expire_edit(owner_id))
         _PENDING_EDITS[owner_id] = PendingEdit(owner_id, query.message, "add_provider", expires_task=task)
         await query.answer("Gửi tên provider mới.")
-        await _edit_menu(query.message, "<b>➕ Add Agent Provider</b>\n\n<i>Gửi tên provider mới trong 60s.</i>", InlineKeyboardMarkup([_footer_row(owner_id, _cb("group", owner_id, _group_token(owner_id, "providers"), 0))]))
+        await _edit_menu(query.message, "<b>➕ Add Agent Provider</b>\n\n<i>Gửi tên provider mới .</i>", InlineKeyboardMarkup([_footer_row(owner_id, _cb("group", owner_id, _group_token(owner_id, "providers"), 0))]))
         return
     if action in {"view", "edit", "toggle"}:
         key_token, group_id, page = parts[3], parts[4], int(parts[5])
@@ -587,7 +708,7 @@ async def config_callback(client: pyrogram.Client, query: pyrogram.types.Callbac
         task = asyncio.create_task(_expire_edit(owner_id))
         _PENDING_EDITS[owner_id] = PendingEdit(owner_id, query.message, "edit", group_id, page, entry, expires_task=task)
         await query.answer("Gửi giá trị mới.")
-        await _edit_menu(query.message, "\n".join(["<b>✏️ Edit Config Variable</b>", "", f"<b>Key:</b> <code>{html.escape(entry.full_key)}</code>", f"<b>Current:</b> <code>{html.escape(_mask_value(entry.full_key, entry.value))}</code>", "<i>Gửi giá trị mới trong 60s.</i>"]), InlineKeyboardMarkup([_footer_row(owner_id, _cb("view", owner_id, key_token, group_id, page))]))
+        await _edit_menu(query.message, "\n".join(["<b>✏️ Edit Config Variable</b>", "", f"<b>Key:</b> <code>{html.escape(entry.full_key)}</code>", f"<b>Current:</b> <code>{html.escape(_mask_value(entry.full_key, entry.value))}</code>", "<i>Gửi giá trị mới .</i>"]), InlineKeyboardMarkup([_footer_row(owner_id, _cb("view", owner_id, key_token, group_id, page))]))
 
 
 @pyrogram.Client.on_message(pyrogram.filters.private & pyrogram.filters.text, group=-1)
