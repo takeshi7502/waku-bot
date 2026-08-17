@@ -56,6 +56,17 @@ def _is_discord_server_admin(message: discord.Message) -> bool:
     permissions = getattr(message.author, "guild_permissions", None)
     return bool(permissions and permissions.administrator)
 
+
+def _can_clean_discord_messages(message: discord.Message) -> bool:
+    """Whether the caller may remove Waku's messages in this server channel."""
+    guild = message.guild
+    if guild is None:
+        return False
+    if guild.owner_id == message.author.id:
+        return True
+    permissions = getattr(message.author, "guild_permissions", None)
+    return bool(permissions and (permissions.administrator or permissions.manage_messages))
+
 def _can_manage_discord_config(message: discord.Message, settings: DiscordGuildSettings) -> bool:
     if _is_discord_bot_admin(message):
         return settings.enabled
@@ -68,10 +79,6 @@ async def _send_admin_notice(message: discord.Message, text: str) -> None:
         timestamp=datetime.now(),
     )
     await message.channel.send(embed=embed, reference=message, delete_after=10)
-    try:
-        await message.delete()
-    except Exception:
-        pass
 
 def _channel_candidate_ids(message: discord.Message) -> set[int]:
     ids = {message.channel.id}

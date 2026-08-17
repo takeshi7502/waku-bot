@@ -33,6 +33,7 @@ from waku.services.manyacg import manyacg_client
 
 from .. import state
 from ..constants import *  # noqa: F403
+from ..embeds import discord_command_embed
 from ..models import DiscordGuildSettings
 from ..settings import _discord_dm_settings, _discord_guild_settings, _r18_mode_label, _rotate_discord_history_epoch, _set_discord_dm_settings, _set_discord_guild_settings
 
@@ -95,7 +96,7 @@ class DiscordConfigView(discord.ui.View):
             lang_button.label = f"Language: {lang_label}"
             lang_button.style = discord.ButtonStyle.primary
 
-    @discord.ui.button(label="R18", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="R18", style=discord.ButtonStyle.secondary, row=0)
     async def toggle_r18(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -122,11 +123,12 @@ class DiscordConfigView(discord.ui.View):
         await interaction.response.defer()
         await self._sync_buttons()
         await interaction.edit_original_response(
-            content=_discord_config_text(self.pending_settings),
+            content=None,
+            embed=_discord_config_embed(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="AI Reply", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="AI Reply", style=discord.ButtonStyle.success, row=0)
     async def toggle_ai_reply(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -134,11 +136,12 @@ class DiscordConfigView(discord.ui.View):
         await interaction.response.defer()
         await self._sync_buttons()
         await interaction.edit_original_response(
-            content=_discord_config_text(self.pending_settings),
+            content=None,
+            embed=_discord_config_embed(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="Group Memory", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Group Memory", style=discord.ButtonStyle.success, row=1)
     async def toggle_group_memory(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -148,11 +151,12 @@ class DiscordConfigView(discord.ui.View):
         await interaction.response.defer()
         await self._sync_buttons()
         await interaction.edit_original_response(
-            content=_discord_config_text(self.pending_settings),
+            content=None,
+            embed=_discord_config_embed(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="Language", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Language", style=discord.ButtonStyle.primary, row=1)
     async def toggle_lang(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -163,11 +167,12 @@ class DiscordConfigView(discord.ui.View):
         await interaction.response.defer()
         await self._sync_buttons()
         await interaction.edit_original_response(
-            content=_discord_config_text(self.pending_settings),
+            content=None,
+            embed=_discord_config_embed(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="Save", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.success, row=0)
     async def save_config(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -228,7 +233,7 @@ class DiscordDMConfigView(discord.ui.View):
             lang_button.label = f"Language: {lang_label}"
             lang_button.style = discord.ButtonStyle.primary
 
-    @discord.ui.button(label="AI Reply", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="AI Reply", style=discord.ButtonStyle.success, row=0)
     async def toggle_ai_reply(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -236,11 +241,12 @@ class DiscordDMConfigView(discord.ui.View):
         await interaction.response.defer()
         await self._sync_buttons()
         await interaction.edit_original_response(
-            content=_discord_dm_config_text(self.pending_settings),
+            content=None,
+            embed=_discord_dm_config_embed(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="Language", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Language", style=discord.ButtonStyle.primary, row=1)
     async def toggle_lang(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -251,11 +257,12 @@ class DiscordDMConfigView(discord.ui.View):
         await interaction.response.defer()
         await self._sync_buttons()
         await interaction.edit_original_response(
-            content=_discord_dm_config_text(self.pending_settings),
+            content=None,
+            embed=_discord_dm_config_embed(self.pending_settings),
             view=self,
         )
 
-    @discord.ui.button(label="Save", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.success, row=0)
     async def save_config(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ) -> None:
@@ -295,14 +302,27 @@ def _discord_dm_config_text(settings: DiscordGuildSettings) -> str:
         "\nPress `Save` to apply changes."
     )
 
+
+def _discord_dm_config_embed(settings: DiscordGuildSettings) -> discord.Embed:
+    return discord_command_embed(
+        _discord_dm_config_text(settings),
+        title="Waku DM config",
+    )
+
 def _discord_config_text(settings: DiscordGuildSettings) -> str:
     lang_name = "Tiếng Việt (vi-VN)" if settings.lang == "vi-VN" else "English (en)"
     return (
-        "**Waku Bot Server config:**\n"
         "Server: `Authorized!`\n"
         f"AI Reply: `{'ON' if settings.ai_reply else 'OFF'}`\n"
         f"Group Memory: `{'ON' if settings.group_memory_enabled else 'OFF'}`\n"
         f"R18/SEG images: `{_r18_mode_label(settings.setu_enabled, settings.r18_mode)}`\n"
         f"Language: `{lang_name}`\n"
         "\nPress `Save` to apply changes."
+    )
+
+
+def _discord_config_embed(settings: DiscordGuildSettings) -> discord.Embed:
+    return discord_command_embed(
+        _discord_config_text(settings),
+        title="Waku Bot Server config",
     )

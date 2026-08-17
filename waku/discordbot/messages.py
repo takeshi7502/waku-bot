@@ -102,8 +102,20 @@ def _is_seg_command(content: str) -> bool:
         return False
     return any(
         lowered == command or lowered.startswith(command + " ")
-        for command in _SETU_COMMANDS
+        for command in _SEG_COMMANDS
     )
+
+
+def _seg_command_keyword(content: str) -> str:
+    """Return the optional search keyword from a recognised text SEG command."""
+    text = content.strip()
+    lowered = text.lower()
+    for command in _SEG_COMMANDS:
+        if lowered == command:
+            return ""
+        if lowered.startswith(command + " "):
+            return text[len(command) :].strip()
+    return ""
 
 def _is_reply_to_bot(message: discord.Message, bot_user: discord.ClientUser) -> bool:
     ref = message.reference

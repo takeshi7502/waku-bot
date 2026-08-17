@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from hashlib import md5
 
 import discord
+from discord import app_commands
 import httpx
 import pydantic_ai
 from ddgs import DDGS
@@ -35,6 +36,7 @@ from . import state
 from .constants import *  # noqa: F403
 from .handlers import _handle_discord_admin_command, _handle_message, _maybe_handle_discord_media_request
 from .history import _record_discord_group_memory, _remember_discord_emojis, _remember_discord_reaction_style
+from .media import _send_discord_seg_interaction
 from .messages import _is_seg_command, _matches_keyword, _should_wake
 from .permissions import _channel_allowed
 from .utilities import _channel_name, _guild_name, _message_text
@@ -48,9 +50,17 @@ def _create_client() -> discord.Client:
     intents.messages = True
     intents.members = DISCORD_MEMBERS_INTENT
     client = discord.Client(intents=intents)
+    command_tree = app_commands.CommandTree(client)
+    slash_commands_synced = False
+
+    @command_tree.command(name="seg", description="Gửi ảnh anime/Pixiv")
+    @app_commands.describe(keyword="Từ khoá tìm ảnh, có thể bỏ trống")
+    async def seg(interaction: discord.Interaction, keyword: str | None = None) -> None:
+        await _send_discord_seg_interaction(interaction, keyword)
 
     @client.event
     async def on_ready() -> None:
+        nonlocal slash_commands_synced
         user = client.user
         if user is None:
             logger.warning("Discord client ready without user")
@@ -62,6 +72,14 @@ def _create_client() -> discord.Client:
             client.add_view(DiscordAuthorizationReviewView())
             state.server_list_view_registered = True
             logger.info("Discord persistent server/config views registered")
+        if not slash_commands_synced:
+            try:
+                synced = await command_tree.sync()
+            except discord.HTTPException as e:
+                logger.warning(f"Discord slash command sync failed: {e}")
+            else:
+                slash_commands_synced = True
+                logger.info(f"Discord slash commands synced: {len(synced)}")
 
     @client.event
     async def on_message(message: discord.Message) -> None:
