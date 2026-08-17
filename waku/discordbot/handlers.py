@@ -124,7 +124,8 @@ async def _send_discord_help(message: discord.Message) -> None:
             "\n\n**Cấu hình**\n"
             "• `!server` — xem danh sách server Waku đang tham gia (dùng trong DM).\n"
             "• `!waku [server_id]` / `!unwaku [server_id]` — bật/tắt Waku cho server "
-            "(dùng trong DM, hoặc không kèm ID khi ở server)."
+            "(dùng trong DM, hoặc không kèm ID khi ở server).\n"
+            "• `/bc <message> [target]` — phát thông báo; `target` là `here`, `all`, `auth`, `unauth`, hoặc ID server."
         )
     await _send_discord_command_embed(
         message,

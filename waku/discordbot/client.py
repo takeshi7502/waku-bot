@@ -33,6 +33,7 @@ from waku.services import manyacg as manyacg_service
 from waku.services.manyacg import manyacg_client
 
 from . import state
+from .broadcast import send_discord_broadcast
 from .constants import *  # noqa: F403
 from .handlers import _handle_discord_admin_command, _handle_message, _maybe_handle_discord_media_request
 from .history import _record_discord_group_memory, _remember_discord_emojis, _remember_discord_reaction_style
@@ -57,6 +58,18 @@ def _create_client() -> discord.Client:
     @app_commands.describe(keyword="Từ khoá tìm ảnh, có thể bỏ trống")
     async def seg(interaction: discord.Interaction, keyword: str | None = None) -> None:
         await _send_discord_seg_interaction(interaction, keyword)
+
+    @command_tree.command(name="bc", description="Phát thông báo đến các server")
+    @app_commands.describe(
+        message="Nội dung thông báo",
+        target="here, all, auth, unauth, hoặc ID server",
+    )
+    async def bc(
+        interaction: discord.Interaction,
+        message: str,
+        target: str | None = None,
+    ) -> None:
+        await send_discord_broadcast(interaction, message, target)
 
     @client.event
     async def on_ready() -> None:
