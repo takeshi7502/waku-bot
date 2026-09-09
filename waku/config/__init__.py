@@ -167,7 +167,11 @@ class _AppConfig(pydantic.BaseModel):
     agent_crawl_api_url: str | None = None
     agent_crawl_api_token: str | None = None
     agent_crawl_api_timeout: int = 60
-    # Agent model call timeouts (seconds) - 0 means no timeout
+    # Hard deadline for a complete conversation turn, including tool calls.
+    # This must be non-zero in production so a stuck provider/tool cannot keep
+    # the per-user busy flag and Telegram typing status alive forever.
+    agent_run_timeout: int = 180
+    # Agent model helper call timeouts (seconds) - 0 means no timeout
     agent_model_timeout: int = 0  # Main model timeout (0 = no timeout)
     agent_small_model_timeout: int = 10  # Small model timeout for quick tasks
     agent_download_timeout: int = 30  # Download media timeout (0 = no timeout)

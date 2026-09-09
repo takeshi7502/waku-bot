@@ -185,6 +185,7 @@ bot:
       forgot: What just happened? I seem to have forgotten...
       summary_prompt: Summarize the conversation.
       errors:
+        timeout: This request took too long ({seconds} seconds), so I stopped it. Please try again or split it into smaller parts.
         model_http_400: That's too lewd! I can't do that! (400)
         model_http: Failed, meow~ Please try again later (HTTP {code})
         too_fast: Too fast! Not yet!

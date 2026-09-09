@@ -141,6 +141,7 @@ bot:
       forgot: 刚刚发生了什么, 好像忘记了呢...
       summary_prompt: 总结对话内容
       errors:
+        timeout: 请求处理时间过长（{seconds} 秒），已停止。请重试或将请求拆分成较小的部分。
         model_http_400: 太涩了, 不行! (400)
         model_http: 失败了喵, 请稍后再试 (HTTP {code})
         too_fast: 太快了! 不行!

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 import pydantic_ai
@@ -124,7 +125,7 @@ def _strip_multimodal_history_for_text_model(
     return sanitized
 
 
-async def run_agent(
+async def _run_agent_impl(
     agi: Agent[Any, Any],
     client: PyrogramClient,
     message: pyrogram.types.Message,
@@ -283,6 +284,10 @@ async def run_agent(
                             agent_run.all_messages(),
                             ttl=app_config.cachettl_agent_history,
                         )
+                except asyncio.CancelledError:
+                    if streaming_output is not None:
+                        await streaming_output.abort()
+                    raise
                 except Exception:
                     if streaming_output is not None:
                         await streaming_output.abort()
@@ -443,3 +448,61 @@ async def run_agent(
             await reply_output(client, message, err_text, deps=deps)
         else:
             await message.reply_text(err_text)
+
+
+async def run_agent(
+    agi: Agent[Any, Any],
+    client: PyrogramClient,
+    message: pyrogram.types.Message,
+    user_id: int,
+    chat_id: int,
+    user_prompt: list[UserContent],
+    history: list[ModelMessage],
+    deps: Any,
+    multimodal_model: Any,
+    model: Any,
+    lang: str,
+    additional_instructions: str | None = None,
+) -> None:
+    """Run one complete agent turn with a hard deadline.
+
+    The deadline covers model calls, web/search tools and output processing. On
+    timeout, cancelling the implementation unwinds its ``finally`` blocks, which
+    stops Telegram typing; the caller's ``finally`` then clears the user busy flag.
+    """
+    configured_timeout = app_config.agent_run_timeout
+    timeout = configured_timeout if configured_timeout > 0 else 180
+    if configured_timeout <= 0:
+        logger.warning(
+            "agent_run_timeout must be greater than zero; using the safe 180s fallback"
+        )
+    coro = _run_agent_impl(
+        agi=agi,
+        client=client,
+        message=message,
+        user_id=user_id,
+        chat_id=chat_id,
+        user_prompt=user_prompt,
+        history=history,
+        deps=deps,
+        multimodal_model=multimodal_model,
+        model=model,
+        lang=lang,
+        additional_instructions=additional_instructions,
+    )
+    try:
+        if timeout > 0:
+            await asyncio.wait_for(coro, timeout=timeout)
+        else:
+            await coro
+    except TimeoutError:
+        logger.warning(
+            f"Agent run timed out after {timeout}s for user {user_id} in chat {chat_id}"
+        )
+        text = i18n.t("bot.msg.agent.errors.timeout", locale=lang).format(
+            seconds=timeout
+        )
+        if deps.is_guest_mode:
+            await reply_output(client, message, text, deps=deps)
+        else:
+            await message.reply_text(text)

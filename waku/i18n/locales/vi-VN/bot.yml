@@ -235,6 +235,7 @@ bot:
       forgot: Chuyện gì vừa xảy ra vậy? Hình như mình quên mất rồi...
       summary_prompt: Tóm tắt cuộc trò chuyện.
       errors:
+        timeout: Yêu cầu mất quá nhiều thời gian ({seconds} giây) nên mình đã dừng xử lý. Bạn thử lại hoặc chia yêu cầu thành phần nhỏ hơn nhé.
         model_http_400: Nội dung này nhạy cảm quá! Mình không làm được! (400)
         model_http: Thất bại rồi meow~ Vui lòng thử lại sau (HTTP {code})
         too_fast: Nhanh quá! Chưa được đâu!

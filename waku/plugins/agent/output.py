@@ -273,6 +273,16 @@ class TypingKeepAlive:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        chat = self.message.chat
+        chat_id = chat.id if chat else None
+        if chat_id:
+            try:
+                await self.client.send_chat_action(
+                    chat_id=chat_id,
+                    action=pyrogram.enums.ChatAction.CANCEL,
+                )
+            except Exception as e:
+                logger.debug(f"TypingKeepAlive: error cancelling chat action: {e}")
 
     async def __aenter__(self):
         self.start()
@@ -469,6 +479,7 @@ class StreamingOutput:
 
     async def abort(self):
         self._stop = True
+        await self.official_draft.stop()
         for task in (self._start_task, self._edit_task):
             if task and not task.done():
                 task.cancel()
