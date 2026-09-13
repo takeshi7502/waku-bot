@@ -28,6 +28,20 @@ _EDIT_TIMEOUT_SECONDS = 60
 _RESTART_DELAY_SECONDS = 2
 _SKIP_GROUP_NUMBERS = {3, 5}
 _SENSITIVE_PARTS = ("token", "secret", "password", "hash", "api_key", "key", "db_url")
+_FALLBACK_GROUP_RULES = (
+    ("webapp", "Web App", ("webapp", "health_check_")),
+    ("discord", "Discord", ("discord_",)),
+    ("redis", "Redis", ("redis",)),
+    ("btts", "BTTS", ("btts",)),
+    ("cache", "Cache", ("cache",)),
+    ("manyacg", "ManyACG", ("manyacg_",)),
+    ("aniobjcut", "Anime Object Cut", ("aniobjcut",)),
+    ("infographic", "Infographic", ("infographic",)),
+    ("avatar", "Avatar", ("avatar_",)),
+    ("sticker", "Sticker & Reaction", ("agent_sticker_", "agent_periodic_")),
+    ("agent", "Agent", ("agent",)),
+    ("economy", "Economy", ("cost_", "coin_")),
+)
 _PROVIDER_DEFAULTS = {
     "url": "https://api.openai.com/v1",
     "key": "",
@@ -194,6 +208,21 @@ def _mask_value(key: str, value: Any) -> str:
     return str(value)
 
 
+def _display_value(key: str, value: Any, max_chars: int = 160) -> str:
+    text = _mask_value(key, value)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[: max_chars - 1]}…"
+
+
+def _fallback_group(key: str) -> tuple[str, str]:
+    """Return a stable UI group for unsectioned top-level TOML keys."""
+    for group_id, title, prefixes in _FALLBACK_GROUP_RULES:
+        if any(key == prefix or key.startswith(prefix) for prefix in prefixes):
+            return group_id, title
+    return "general", "General"
+
+
 def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[str]]:
     groups: list[ConfigGroup] = []
     entries: dict[str, ConfigEntry] = {}
@@ -205,6 +234,8 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
     assign_re = re.compile(r"^([A-Za-z0-9_]+)\s*=\s*(.+)$")
     lines = _settings_text().splitlines()
     multiline_delimiter: str | None = None
+    saw_numbered_heading = False
+    top_level_keys: list[str] = []
 
     for index, line in enumerate(lines):
         stripped = line.strip()
@@ -215,6 +246,7 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
 
         heading = heading_re.match(stripped)
         if heading:
+            saw_numbered_heading = True
             number = int(heading.group(1))
             current_table = None
             current = None
@@ -240,6 +272,8 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
         full_key = f"{current_table}.{key}" if current_table else key
         entry = ConfigEntry(key, full_key, _parse_scalar(raw_value), index, current_table)
         entries[full_key] = entry
+        if current_table is None:
+            top_level_keys.append(full_key)
         if current is not None and not (current_table or "").startswith("agent_providers."):
             current.keys.append(full_key)
 
@@ -248,6 +282,21 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
             if value_start.startswith(delimiter) and value_start.count(delimiter) == 1:
                 multiline_delimiter = delimiter
                 break
+
+    # Current settings files use separator comments instead of numbered headings.
+    # The original parser consequently left every top-level variable without a
+    # menu group. Keep support for the legacy numbered format, and classify the
+    # unsectioned format by stable config prefixes.
+    if not saw_numbered_heading:
+        fallback_groups: dict[str, ConfigGroup] = {}
+        for full_key in top_level_keys:
+            group_id, title = _fallback_group(full_key)
+            group = fallback_groups.get(group_id)
+            if group is None:
+                group = ConfigGroup(group_id, title, [], None)
+                fallback_groups[group_id] = group
+                groups.append(group)
+            group.keys.append(full_key)
 
     if providers:
         groups.append(ConfigGroup("providers", "agent_providers", [], None))
@@ -355,12 +404,17 @@ def _group_markup(owner_id: int, group_id: str, page: int) -> tuple[str, InlineK
     sess = _session(owner_id)
     for index, key in enumerate(group.keys):
         sess.keys[f"{group_id}_{index}"] = key
+    total_pages = max(1, (len(group.keys) + _VAR_PAGE_SIZE - 1) // _VAR_PAGE_SIZE)
+    page = min(max(page, 0), total_pages - 1)
+    start = page * _VAR_PAGE_SIZE
+    page_keys = group.keys[start : start + _VAR_PAGE_SIZE]
     buttons = []
     lines = [f"⌬ <b>{html.escape(group.title)} Settings :</b>", "│"]
-    for idx, key in enumerate(group.keys):
+    for page_index, key in enumerate(page_keys):
         entry = entries.get(key)
         if entry is None:
             continue
+        idx = start + page_index
         token = f"{group_id}_{idx}"
         action = "toggle" if isinstance(entry.value, bool) else "view"
         buttons.append(
@@ -369,12 +423,16 @@ def _group_markup(owner_id: int, group_id: str, page: int) -> tuple[str, InlineK
                 callback_data=_cb(action, owner_id, token, group_id, 0),
             )
         )
-        branch = "┖" if idx == len(group.keys) - 1 else "┠"
-        value = html.escape(_mask_value(entry.full_key, entry.value))
+        branch = "┖" if page_index == len(page_keys) - 1 else "┠"
+        value = html.escape(_display_value(entry.full_key, entry.value))
         label = html.escape(_entry_label(owner_id, entry))
         lines.append(f"{branch} <b>{label}</b> → <code>{value}</code>")
     rows = _button_rows(buttons, 2)
-    rows.append(_footer_row(owner_id, _cb("groups", owner_id, 0)))
+    prev_data = _cb("group", owner_id, _group_token(owner_id, group_id), page - 1) if page > 0 else None
+    next_data = _cb("group", owner_id, _group_token(owner_id, group_id), page + 1) if page < total_pages - 1 else None
+    rows.append(_footer_row(owner_id, _cb("groups", owner_id, 0), prev_data, next_data))
+    if total_pages > 1:
+        lines.insert(1, f"Page: <b>{page + 1}/{total_pages}</b>")
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
@@ -431,7 +489,7 @@ def _provider_markup(owner_id: int, provider: str) -> tuple[str, InlineKeyboardM
 
 
 def _entry_text(entry: ConfigEntry) -> str:
-    value = html.escape(_mask_value(entry.full_key, entry.value))
+    value = html.escape(_display_value(entry.full_key, entry.value, 3000))
     return "\n".join([
         "⌬ <b>Config Variable :</b>",
         "│",
@@ -479,6 +537,7 @@ def _delete_provider(provider: str) -> None:
     _SETTINGS_PATH.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+def _add_provider(provider: str) -> None:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", provider):
         raise ValueError("Provider name chỉ dùng chữ/số/_/-")
     _, _, providers = _parse_settings()
