@@ -5,9 +5,13 @@ docs/
 .git/
 .agentfs/
 .ruff_cache/
+.pytest_cache/
 __pycache__/
 *.pyc
 *.pyo
+node_modules/
+webapp/node_modules/
+.pnpm-store/
 *.md
 docker-compose.yml
 data/
