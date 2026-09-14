@@ -27,6 +27,7 @@ RUN uv sync --frozen --no-dev && \
     rm -rf /root/.cache/uv
 
 COPY . .
+RUN chmod +x /waku/scripts/entrypoint.sh
 
 ARG WAKU_VERSION=unknown
 ARG WAKU_COMMIT=unknown
@@ -39,4 +40,4 @@ ENV WAKU_BUILD_TIME=$WAKU_BUILD_TIME
 # Expose health check port
 EXPOSE 8180
 
-ENTRYPOINT ["uv", "run", "python", "-m", "waku"]
+ENTRYPOINT ["/waku/scripts/entrypoint.sh"]
