@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 from waku.plugins import version
@@ -83,6 +84,57 @@ agent_model = "default/model"
     assert set(entries) == {"agent_prompt", "agent_model"}
     assert groups[0].group_id == "agent"
     assert groups[0].keys == ["agent_prompt", "agent_model"]
+    assert entries["agent_prompt"].value == 'fake_key = "not a setting"\n'
+    assert entries["agent_prompt"].line_end_index == 3
+
+
+def test_write_entry_replaces_full_multiline_block_and_preserves_newlines(
+    tmp_path, monkeypatch
+):
+    _, entries, _ = _parse(
+        tmp_path,
+        monkeypatch,
+        '''
+agent_prompt = """
+Dòng đầu tiên.
+Dòng thứ hai có "dấu ngoặc" và đường dẫn.
+"""
+agent_model = "default/model"
+''',
+    )
+    new_prompt = "Câu đầu.\nCâu thứ hai có \"trích dẫn\".\nCâu cuối."
+
+    version._write_entry(entries["agent_prompt"], new_prompt)
+
+    text = version._settings_text()
+    assert "Dòng đầu tiên" not in text
+    assert 'agent_model = "default/model"' in text
+    _, updated_entries, _ = version._parse_settings()
+    assert updated_entries["agent_prompt"].value == new_prompt
+
+
+def test_write_entry_repairs_multiline_string_corrupted_by_old_editor(
+    tmp_path, monkeypatch
+):
+    _, entries, _ = _parse(
+        tmp_path,
+        monkeypatch,
+        '''
+agent_prompt = "Dòng đầu tiên.
+Dòng cũ có \\"trích dẫn\\".
+Dòng cuối."
+agent_model = "default/model"
+''',
+    )
+    entry = entries["agent_prompt"]
+    assert entry.value == 'Dòng đầu tiên.\nDòng cũ có "trích dẫn".\nDòng cuối.'
+    assert entry.line_end_index == 3
+
+    version._write_entry(entry, "Prompt mới.\nVẫn đủ hai dòng.")
+
+    parsed = tomllib.loads(version._settings_text())
+    assert parsed["agent_prompt"] == "Prompt mới.\nVẫn đủ hai dòng."
+    assert parsed["agent_model"] == "default/model"
 
 
 def test_group_markup_paginates_long_groups(tmp_path, monkeypatch):

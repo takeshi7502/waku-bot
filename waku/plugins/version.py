@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -108,6 +109,7 @@ class ConfigEntry:
     value: Any
     line_index: int
     table: str | None = None
+    line_end_index: int | None = None
 
 
 @dataclass
@@ -164,6 +166,53 @@ def _parse_scalar(raw: str) -> Any:
         return value.strip('"')
 
 
+def _parse_toml_value(raw: str) -> Any:
+    """Parse one TOML value, including complete multiline string literals."""
+    try:
+        return tomllib.loads(f"value = {raw}")["value"]
+    except (tomllib.TOMLDecodeError, KeyError):
+        return _parse_scalar(raw)
+
+
+def _ends_with_unescaped_quote(value: str) -> bool:
+    stripped = value.rstrip()
+    if not stripped.endswith('"'):
+        return False
+    backslashes = 0
+    for char in reversed(stripped[:-1]):
+        if char != "\\":
+            break
+        backslashes += 1
+    return backslashes % 2 == 0
+
+
+def _recover_broken_multiline_string(
+    lines: list[str], line_index: int, raw_value: str
+) -> tuple[str, int] | None:
+    """Recover files written by the old editor with literal newlines in ``"..."``."""
+    value_start = raw_value.lstrip()
+    if not value_start.startswith('"'):
+        return None
+    try:
+        tomllib.loads(f"value = {raw_value}")
+        return None
+    except tomllib.TOMLDecodeError:
+        pass
+
+    for candidate in range(line_index + 1, len(lines)):
+        if not _ends_with_unescaped_quote(lines[candidate]):
+            continue
+        broken_literal = "\n".join(
+            [value_start, *lines[line_index + 1 : candidate + 1]]
+        )
+        escaped_literal = broken_literal.replace("\n", "\\n")
+        try:
+            return json.loads(escaped_literal), candidate
+        except json.JSONDecodeError:
+            return broken_literal[1:-1], candidate
+    return None
+
+
 def _toml_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -171,8 +220,10 @@ def _toml_value(value: Any) -> str:
         return str(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
-    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    # JSON strings use the same escapes needed by TOML basic strings. In
+    # particular, real newlines become ``\n`` instead of corrupting the file by
+    # being written inside a one-line quoted TOML value.
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def _coerce_value(raw: str, old_value: Any) -> Any:
@@ -233,16 +284,14 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
     table_re = re.compile(r"^\[([^\]]+)]\s*$")
     assign_re = re.compile(r"^([A-Za-z0-9_]+)\s*=\s*(.+)$")
     lines = _settings_text().splitlines()
-    multiline_delimiter: str | None = None
+    skip_until = -1
     saw_numbered_heading = False
     top_level_keys: list[str] = []
 
     for index, line in enumerate(lines):
-        stripped = line.strip()
-        if multiline_delimiter is not None:
-            if multiline_delimiter in stripped:
-                multiline_delimiter = None
+        if index <= skip_until:
             continue
+        stripped = line.strip()
 
         heading = heading_re.match(stripped)
         if heading:
@@ -269,19 +318,39 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
             continue
         key = match.group(1)
         raw_value = match.group(2)
+        line_end_index = index
+        value_start = raw_value.lstrip()
+        for delimiter in ("'''", '"""'):
+            if value_start.startswith(delimiter) and value_start.count(delimiter) == 1:
+                for candidate in range(index + 1, len(lines)):
+                    if delimiter in lines[candidate]:
+                        line_end_index = candidate
+                        raw_value = "\n".join(
+                            [match.group(2), *lines[index + 1 : candidate + 1]]
+                        )
+                        skip_until = candidate
+                        break
+                break
+        if line_end_index == index:
+            recovered = _recover_broken_multiline_string(lines, index, raw_value)
+            if recovered is not None:
+                recovered_value, line_end_index = recovered
+                raw_value = _toml_value(recovered_value)
+                skip_until = line_end_index
         full_key = f"{current_table}.{key}" if current_table else key
-        entry = ConfigEntry(key, full_key, _parse_scalar(raw_value), index, current_table)
+        entry = ConfigEntry(
+            key,
+            full_key,
+            _parse_toml_value(raw_value),
+            index,
+            current_table,
+            line_end_index,
+        )
         entries[full_key] = entry
         if current_table is None:
             top_level_keys.append(full_key)
         if current is not None and not (current_table or "").startswith("agent_providers."):
             current.keys.append(full_key)
-
-        value_start = raw_value.lstrip()
-        for delimiter in ("'''", '"""'):
-            if value_start.startswith(delimiter) and value_start.count(delimiter) == 1:
-                multiline_delimiter = delimiter
-                break
 
     # Current settings files use separator comments instead of numbered headings.
     # The original parser consequently left every top-level variable without a
@@ -510,7 +579,12 @@ def _write_entry(entry: ConfigEntry, value: Any) -> None:
     lines = _settings_text().splitlines()
     old_line = lines[entry.line_index]
     prefix = old_line.split("=", 1)[0].rstrip()
-    lines[entry.line_index] = f"{prefix} = {_toml_value(value)}"
+    line_end_index = (
+        entry.line_index if entry.line_end_index is None else entry.line_end_index
+    )
+    lines[entry.line_index : line_end_index + 1] = [
+        f"{prefix} = {_toml_value(value)}"
+    ]
     _SETTINGS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

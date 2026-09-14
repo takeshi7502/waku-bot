@@ -6,6 +6,7 @@ readonly IMAGE_NAME="${WAKU_IMAGE_NAME:-waku-bot:local}"
 readonly PNPM_VERSION="${PNPM_VERSION:-11.3.0}"
 readonly MIN_FREE_GB="${MIN_FREE_GB:-5}"
 readonly HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
+readonly DEFAULT_MINIAPP_DOMAIN="${WAKU_MINIAPP_DOMAIN:-waku.takeshi.dev}"
 
 cd "$ROOT_DIR"
 
@@ -20,6 +21,43 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./build.sh [option]
+
+  (no option)          Show the interactive menu when run in a terminal.
+  --deploy             Build/update and start the Waku bot.
+  --setup-miniapp      Configure Nginx + HTTPS for the Mini App only.
+  --all                Deploy Waku, then configure the Mini App.
+  --help               Show this help.
+
+Mini App setup environment variables:
+  WAKU_MINIAPP_DOMAIN  Domain to proxy to Waku (default: waku.takeshi.dev)
+  CERTBOT_EMAIL        Email used for Let's Encrypt renewal notices
+  WAKU_MINIAPP_FORCE=1  Replace an existing config for the same domain
+EOF
+}
+
+is_valid_domain() {
+  local domain="$1"
+  [[ "$domain" =~ ^[A-Za-z0-9.-]+$ ]] &&
+    [[ "$domain" == *.* ]] &&
+    [[ "$domain" != .* ]] &&
+    [[ "$domain" != *..* ]] &&
+    [[ "$domain" != *.-* ]] &&
+    [[ "$domain" != *- ]] &&
+    [[ "$domain" != *. ]]
+}
+
+confirm() {
+  local prompt="$1" answer
+  if [[ ! -t 0 ]]; then
+    return 1
+  fi
+  read -r -p "$prompt [y/N] " answer
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 has_changed() {
@@ -141,6 +179,126 @@ wait_for_waku() {
   die "waku did not become healthy within ${HEALTH_TIMEOUT} seconds"
 }
 
+setup_miniapp() {
+  local domain email entered_domain site_file enabled_file backup_file
+  local nginx_available="/etc/nginx/sites-available"
+  local nginx_enabled="/etc/nginx/sites-enabled"
+
+  require_command sudo
+  require_command nginx
+  require_command curl
+  sudo -v
+
+  domain="$DEFAULT_MINIAPP_DOMAIN"
+  if [[ -t 0 ]]; then
+    read -r -p "Mini App domain [${domain}]: " entered_domain
+    domain="${entered_domain:-$domain}"
+  fi
+  is_valid_domain "$domain" || die "Invalid domain: ${domain}"
+
+  email="${CERTBOT_EMAIL:-}"
+  if [[ -z "$email" && -t 0 ]]; then
+    read -r -p "Email for Let's Encrypt renewal notices: " email
+  fi
+  [[ "$email" == *"@"* ]] || die \
+    "Set CERTBOT_EMAIL or enter a valid email so Let's Encrypt can issue and renew the certificate."
+
+  if [[ -d "$nginx_available" && -d "$nginx_enabled" ]]; then
+    site_file="${nginx_available}/${domain}"
+    enabled_file="${nginx_enabled}/${domain}"
+  else
+    site_file="/etc/nginx/conf.d/${domain}.conf"
+    enabled_file=""
+    sudo mkdir -p /etc/nginx/conf.d
+  fi
+
+  if sudo nginx -T 2>&1 | grep -Fq "$domain" && [[ ! -e "$site_file" ]]; then
+    log "Nginx already contains a reference to ${domain} outside ${site_file}."
+    confirm "Continue and add this new virtual host?" || die "Mini App setup cancelled; inspect the existing Nginx configuration first."
+  fi
+
+  if [[ -e "$site_file" ]]; then
+    if [[ "${WAKU_MINIAPP_FORCE:-0}" != "1" ]]; then
+      confirm "Replace existing ${site_file}?" || die "Mini App setup cancelled; existing config was not changed."
+    fi
+    backup_file="${site_file}.backup-$(date +%Y%m%d%H%M%S)"
+    sudo cp -a "$site_file" "$backup_file"
+    log "Backed up existing Nginx config to ${backup_file}"
+  fi
+
+  if command -v getent >/dev/null 2>&1; then
+    local resolved_ips
+    resolved_ips="$(getent ahostsv4 "$domain" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+    if [[ -n "$resolved_ips" ]]; then
+      log "${domain} currently resolves to: ${resolved_ips}"
+    else
+      log "WARNING: ${domain} has no IPv4 DNS result yet. Certificate issuance will fail until DNS propagates."
+    fi
+  fi
+
+  log "Writing Nginx reverse proxy for ${domain} -> 127.0.0.1:8180..."
+  sudo tee "$site_file" >/dev/null <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    location / {
+        proxy_pass http://127.0.0.1:8180;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 15s;
+        proxy_read_timeout 120s;
+    }
+}
+EOF
+
+  if [[ -n "$enabled_file" ]]; then
+    if [[ -e "$enabled_file" && ! -L "$enabled_file" ]]; then
+      if [[ "${WAKU_MINIAPP_FORCE:-0}" != "1" ]]; then
+        confirm "Replace non-symlink ${enabled_file}?" || die "Mini App setup cancelled; sites-enabled file was not changed."
+      fi
+      backup_file="${enabled_file}.backup-$(date +%Y%m%d%H%M%S)"
+      sudo cp -a "$enabled_file" "$backup_file"
+      log "Backed up existing sites-enabled file to ${backup_file}"
+    fi
+    sudo ln -sfn "$site_file" "$enabled_file"
+  fi
+
+  sudo nginx -t
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl reload nginx
+  else
+    sudo nginx -s reload
+  fi
+
+  if ! command -v certbot >/dev/null 2>&1; then
+    require_command apt-get
+    log "Installing Certbot and its Nginx plugin..."
+    sudo apt-get update
+    sudo apt-get install -y certbot python3-certbot-nginx
+  fi
+
+  log "Requesting/updating the HTTPS certificate..."
+  sudo certbot --nginx --non-interactive --agree-tos --redirect \
+    --email "$email" -d "$domain"
+
+  log "Verifying the public Mini App URL..."
+  if curl --fail --silent --show-error --location --max-time 20 \
+    --output /dev/null "https://${domain}/"; then
+    log "Mini App is ready: https://${domain}/"
+  else
+    log "WARNING: HTTPS is configured, but the panel did not answer successfully yet. Check: docker compose logs --tail=100 waku"
+  fi
+
+  log "Keep this exact URL in BotFather: https://${domain}/"
+  log "If Azure Firewall/NSG is enabled, allow inbound TCP ports 80 and 443. Do not expose 8180 publicly."
+}
+
+deploy_waku() {
 require_command git
 require_command docker
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
@@ -216,3 +374,44 @@ fi
 
 show_disk_usage
 log "Deployment completed: ${WAKU_VERSION}"
+}
+
+main() {
+  local action="${1:-}"
+  case "$action" in
+    --help | -h)
+      usage
+      ;;
+    --deploy)
+      deploy_waku
+      ;;
+    --setup-miniapp)
+      setup_miniapp
+      ;;
+    --all)
+      deploy_waku
+      setup_miniapp
+      ;;
+    "")
+      if [[ ! -t 0 ]]; then
+        deploy_waku
+        return
+      fi
+      printf '\nWaku deployment menu\n  1) Build/update bot\n  2) Set up Mini App domain (Nginx + HTTPS)\n  3) Do both\n  0) Exit\n\n'
+      read -r -p "Choose [1-3, 0]: " action
+      case "$action" in
+        1) deploy_waku ;;
+        2) setup_miniapp ;;
+        3) deploy_waku; setup_miniapp ;;
+        0) log "No changes made." ;;
+        *) die "Invalid choice: ${action}" ;;
+      esac
+      ;;
+    *)
+      usage >&2
+      die "Unknown option: ${action}"
+      ;;
+  esac
+}
+
+main "$@"
