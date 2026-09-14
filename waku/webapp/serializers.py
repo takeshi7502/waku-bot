@@ -104,6 +104,7 @@ def chat_config_out(config: ChatConfig) -> ChatConfigOut:
         title_permissions=_normalize_permissions(config.title_permissions),
         greeting=config.greeting,
         ai_reply=config.ai_reply,
+        bot_reply=config.bot_reply,
         ai_reply_other_bots_enabled=config.ai_reply_other_bots_enabled,
         ai_comment=config.ai_comment,
         setu_enabled=config.setu_enabled,

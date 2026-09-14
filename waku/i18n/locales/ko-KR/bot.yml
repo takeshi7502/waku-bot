@@ -296,6 +296,7 @@ bot:
       message_search: 메시지 검색
       quote_pin_message: 인용 메시지 고정
       ai_reply: AI 답장
+      bot_reply: 기본 키워드 답장
       ai_reply_other_bots_enabled: 다른 봇에 응답
       ai_comment: AI 댓글
       setu_enabled: 랜덤 숭한 짤

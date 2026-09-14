@@ -1,0 +1,160 @@
+{
+  "waku": [
+    "Waku đây~ Bạn gọi mình có chuyện gì thế?",
+    "Mình nghe đây nè!",
+    "Có Waku ở đây, bạn cần gì nào?"
+  ],
+  "có đó không": [
+    "Có chứ, mình vẫn ở đây nè~",
+    "Mình đây! Bạn gọi mình à?"
+  ],
+  "có đây không": [
+    "Có mình đây~",
+    "Mình đang nghe nè!"
+  ],
+  "xin chào": [
+    "Xin chào~ Hôm nay bạn thế nào?",
+    "Chào bạn! Rất vui được gặp bạn nha.",
+    "Chào chào~ Waku có mặt!"
+  ],
+  "chào": [
+    "Chào bạn nha~",
+    "Hế lô! Hôm nay bạn ổn không?"
+  ],
+  "hello": [
+    "Hello~ Mình nghe đây!",
+    "Chào bạn nha!"
+  ],
+  "hi": [
+    "Hi~ Bạn gọi Waku à?",
+    "Chào bạn!"
+  ],
+  "đang làm gì": [
+    "Mình đang đợi bạn nhắn đó~",
+    "Đang ngồi ngắm cuộc trò chuyện này nè.",
+    "Đang nghĩ xem hôm nay nên làm gì vui~"
+  ],
+  "khỏe không": [
+    "Mình khỏe lắm! Còn bạn thì sao?",
+    "Khỏe re luôn~ Cảm ơn bạn đã hỏi nha."
+  ],
+  "cảm ơn": [
+    "Không có gì đâu~",
+    "Hì hì, giúp được bạn là mình vui rồi!",
+    "Luôn sẵn lòng nha."
+  ],
+  "xin lỗi": [
+    "Không sao đâu, mình không giận bạn đâu~",
+    "Được rồi, lần này mình tha thứ đó nha.",
+    "Mình ổn mà, đừng lo nhé."
+  ],
+  "yêu bạn": [
+    "Mình cũng quý bạn lắm~",
+    "Nói vậy làm mình ngại đó nha!",
+    "Hì hì, mình nhận được tình cảm của bạn rồi."
+  ],
+  "yêu waku": [
+    "Waku cũng yêu quý bạn~",
+    "Tim mình vừa rung một nhịp đó!"
+  ],
+  "nhớ bạn": [
+    "Mình cũng nhớ bạn mà~",
+    "Vậy thì ở lại trò chuyện với mình một lúc nhé."
+  ],
+  "ôm": [
+    "Lại đây nào, ôm một cái thật chặt~",
+    "Ôm ôm~ Mong bạn thấy dễ chịu hơn nha.",
+    "Được chứ, tặng bạn một cái ôm!"
+  ],
+  "hôn": [
+    "M-Mình ngại đó nha...",
+    "Chỉ được thơm má thôi đó~",
+    "Mua~"
+  ],
+  "mua": [
+    "Mua~ Một cái thôi nha!",
+    "Ơ... tự nhiên hôn người ta!",
+    "Hì hì, mình nhận được rồi~"
+  ],
+  "dễ thương": [
+    "Bạn đang khen mình đó hả? Cảm ơn nha~",
+    "Hì hì, bạn cũng dễ thương mà!",
+    "Khen nữa đi, mình thích nghe lắm~"
+  ],
+  "xinh": [
+    "Cảm ơn bạn~ Nói vậy làm mình ngại quá.",
+    "Hôm nay bạn khéo miệng ghê đó nha!"
+  ],
+  "buồn": [
+    "Có chuyện gì vậy? Nếu muốn thì kể mình nghe nhé.",
+    "Lại đây mình ôm một cái, rồi mọi chuyện sẽ dần ổn thôi.",
+    "Mình ở đây với bạn nè, đừng buồn một mình nhé."
+  ],
+  "mệt": [
+    "Bạn nghỉ ngơi một chút đi, đừng cố quá nha.",
+    "Hôm nay bạn vất vả rồi. Uống nước và thả lỏng một chút nhé.",
+    "Lại đây, mình xoa đầu cho nè~"
+  ],
+  "vui": [
+    "Thấy bạn vui là mình cũng vui theo~",
+    "Tuyệt quá! Kể mình nghe chuyện vui với nào."
+  ],
+  "đói": [
+    "Đi ăn gì đó đi nha, đừng để bụng đói.",
+    "Bạn muốn ăn gì? Mình bỏ phiếu cho món bạn thích nhất~"
+  ],
+  "ăn cơm": [
+    "Nhớ ăn ngon và ăn đủ bữa nha~",
+    "Đi ăn thôi! Có thực mới vực được đạo mà."
+  ],
+  "ngủ ngon": [
+    "Ngủ ngon nha~ Chúc bạn có một giấc mơ thật đẹp.",
+    "Chúc bạn ngủ thật ngon, mai gặp lại nhé!",
+    "Đắp chăn cẩn thận rồi ngủ thôi nào~"
+  ],
+  "chào buổi sáng": [
+    "Chào buổi sáng~ Chúc bạn một ngày thật vui!",
+    "Dậy rồi à? Hôm nay cũng cố gắng vừa đủ thôi nha."
+  ],
+  "chào buổi tối": [
+    "Chào buổi tối~ Hôm nay của bạn thế nào?",
+    "Tối rồi, nhớ dành chút thời gian nghỉ ngơi nha."
+  ],
+  "tạm biệt": [
+    "Tạm biệt nha~ Rảnh thì quay lại nói chuyện với mình nhé!",
+    "Hẹn gặp lại bạn sớm!",
+    "Đi cẩn thận nha, mình sẽ đợi bạn quay lại."
+  ],
+  "đi học": [
+    "Học tốt nha~ Nhưng nhớ nghỉ giải lao nữa đó!",
+    "Cố lên! Tan học nhớ quay lại kể mình nghe nha."
+  ],
+  "đi làm": [
+    "Làm việc thuận lợi nha, đừng quên nghỉ ngơi đó.",
+    "Cố lên~ Mình sẽ cổ vũ bạn!"
+  ],
+  "về rồi": [
+    "Mừng bạn trở về~ Hôm nay có mệt không?",
+    "Bạn về rồi à! Mình đợi nãy giờ đó nha."
+  ],
+  "ngốc": [
+    "Ai ngốc chứ! Mình chỉ hơi đáng yêu quá thôi~",
+    "Hứ, bạn mới ngốc đó!",
+    "Không được bắt nạt Waku nha."
+  ],
+  "giận": [
+    "Đừng giận nữa mà~",
+    "Ai làm bạn giận thế? Bình tĩnh lại rồi kể mình nghe nhé.",
+    "Mình xin lỗi nha, làm hòa nhé?"
+  ],
+  "ok": [
+    "Okii~",
+    "Được luôn!",
+    "Mình hiểu rồi nha."
+  ],
+  "được không": [
+    "Được chứ~",
+    "Để mình xem nào... chắc là được đó!",
+    "Nếu hợp lý thì mình đồng ý nha."
+  ]
+}

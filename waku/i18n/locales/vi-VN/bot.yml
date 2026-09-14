@@ -109,7 +109,9 @@ bot:
       q [từ khóa] - Tìm trích dẫn
     reply:
       default:
-        - Meow?
+        - Waku đây, bạn gọi mình à?
+        - Mình nghe đây nè~
+        - Có chuyện gì thế, kể mình nghe nào.
     manyacg:
       artwork_pictures_count: Tác phẩm này có {count} ảnh.
       seefull: ->Nhấn để xem
@@ -445,6 +447,7 @@ bot:
       message_search: Tìm tin nhắn
       quote_pin_message: Ghim tin nhắn trích dẫn
       ai_reply: AI trả lời
+      bot_reply: Bot trả lời mặc định
       ai_reply_other_bots_enabled: Trả lời bot khác
       ai_comment: AI bình luận
       setu_enabled: Ảnh nóng ngẫu nhiên

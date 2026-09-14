@@ -112,6 +112,7 @@
     "message_search_enabled": "Message search",
     "quote_pin_message": "Pin quoted messages",
     "ai_reply": "AI reply",
+    "bot_reply": "Default bot replies",
     "ai_reply_other_bots_enabled": "Reply to other bots",
     "ai_comment": "Comment on channel posts",
     "setu_enabled": "Random lewds",

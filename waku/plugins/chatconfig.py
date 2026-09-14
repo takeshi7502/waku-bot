@@ -58,6 +58,12 @@ class ChatConfigMarkup:
                         callback_data=self.get_callback_data("ai_reply"),
                     ),
                     InlineKeyboardButton(
+                        f"{self.format_toggle_label(i18n.t('bot.button.chat_config.bot_reply', locale=self.lang), self.chat_config.bot_reply)}",
+                        callback_data=self.get_callback_data("bot_reply"),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
                         f"{self.format_toggle_label(i18n.t('bot.button.chat_config.ai_comment', locale=self.lang), self.chat_config.ai_comment)}",
                         callback_data=self.get_callback_data("ai_comment"),
                     ),
@@ -178,6 +184,8 @@ async def config_chat(
                 chat_config.quote_pin_message = not chat_config.quote_pin_message
             case "ai_reply":
                 chat_config.ai_reply = not chat_config.ai_reply
+            case "bot_reply":
+                chat_config.bot_reply = not chat_config.bot_reply
             case "setu_enabled":
                 chat_config.setu_enabled = not chat_config.setu_enabled
             case "convert_b23_enabled":

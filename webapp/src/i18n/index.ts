@@ -82,8 +82,7 @@ export function tOptional(path: string): string | undefined {
   const active = CATALOGUES[currentLocale.value];
   const fallback = CATALOGUES[FALLBACK_LOCALE];
   return (
-    (active ? lookup(active, path) : undefined) ??
-    (fallback ? lookup(fallback, path) : undefined)
+    (active ? lookup(active, path) : undefined) ?? (fallback ? lookup(fallback, path) : undefined)
   );
 }
 

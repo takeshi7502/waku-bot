@@ -92,6 +92,7 @@ async def update_chat_config(
         title_permissions=current.title_permissions,
         greeting=payload.greeting,
         ai_reply=payload.ai_reply,
+        bot_reply=payload.bot_reply,
         ai_reply_other_bots_enabled=payload.ai_reply_other_bots_enabled,
         ai_comment=payload.ai_comment,
         setu_enabled=payload.setu_enabled,

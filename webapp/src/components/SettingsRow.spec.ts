@@ -65,12 +65,12 @@ describe("SettingsRow", () => {
 
   it("swaps the chevron for the spinner rather than showing both", () => {
     const idle = mount(SettingsRow, { props: { label: "σÉîµ¡ÑµêÉσæÿ", navigable: true } });
-    expect(idle.text()).toContain("ΓÇ║");
+    expect(idle.text()).toContain("›");
 
     const busy = mount(SettingsRow, {
       props: { label: "σÉîµ¡ÑµêÉσæÿ", navigable: true, busy: true },
     });
-    expect(busy.text()).not.toContain("ΓÇ║");
+    expect(busy.text()).not.toContain("›");
   });
 
   it("hides a stale value while the action that replaces it is running", () => {

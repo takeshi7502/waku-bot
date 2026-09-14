@@ -49,6 +49,7 @@ const EMPTY_CONFIG: ChatConfigInput = {
   quote_pin_message: true,
   greeting: null,
   ai_reply: true,
+  bot_reply: false,
   ai_reply_other_bots_enabled: false,
   ai_comment: false,
   setu_enabled: true,

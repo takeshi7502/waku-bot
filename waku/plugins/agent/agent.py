@@ -33,7 +33,7 @@ from .runner import (
     set_chat_model_override,
     set_chat_prompt_override,
 )
-from .simple_reply import word_reply
+from .simple_reply import bot_reply_if_enabled
 from .whitelist import is_chat_allowed
 
 agent = None
@@ -751,13 +751,13 @@ _chat_command_filter = (
 async def wake_agent(client: PyrogramClient, message: pyrogram.types.Message):
     # some check
     if not app_config.agent or not agent:
-        return await word_reply(client, message)
+        return await bot_reply_if_enabled(client, message)
     user = message.sender_chat or message.from_user
     if not user or not user.id:
-        return await word_reply(client, message)
+        return
     chat = message.chat
     if not chat or not chat.id:
-        return await word_reply(client, message)
+        return
     chat_config = None
     if chat.type == pyrogram.enums.ChatType.PRIVATE:
         user_config = await database.get_user_config(user.id)
@@ -768,11 +768,14 @@ async def wake_agent(client: PyrogramClient, message: pyrogram.types.Message):
                 )
             return
     if not is_chat_allowed(chat.id):
-        return await word_reply(client, message)
-    if chat.type == pyrogram.enums.ChatType.SUPERGROUP:
+        return await bot_reply_if_enabled(client, message)
+    if chat.type in (
+        pyrogram.enums.ChatType.GROUP,
+        pyrogram.enums.ChatType.SUPERGROUP,
+    ):
         chat_config = await database.get_chat_config(chat)
         if not chat_config.ai_reply:
-            return await word_reply(client, message)
+            return await bot_reply_if_enabled(client, message, chat_config)
     user_data = await database.get_user_by_id(user.id)
     if not user_data:
         return

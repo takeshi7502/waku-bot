@@ -36,7 +36,7 @@ import {
         class="border-line shrink-0 border px-3 py-2 text-sub"
         @click="backButtonHandler?.()"
       >
-        <
+        ‹
       </button>
 
       <button

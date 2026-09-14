@@ -9,6 +9,7 @@ from waku import database, i18n, resources
 from waku.common.memory_store import memttlcache
 from waku.common.utils import is_explicit_reply
 from waku.config import app_config
+from waku.database.models import ChatConfig
 from waku.services import manyacg
 
 
@@ -36,7 +37,7 @@ async def word_reply(client: Client, message: pyrogram.types.Message):
     )
     await message.reply_chat_action(pyrogram.enums.ChatAction.TYPING)
     all_replies = []
-    word_dict = resources.get_word_dict()
+    word_dict = resources.get_word_dict(user_config.lang)
     for keyword, replies in word_dict.items():
         if keyword in text:
             all_replies.extend(replies)
@@ -48,6 +49,25 @@ async def word_reply(client: Client, message: pyrogram.types.Message):
         await message.reply_text(
             text=i18n.trl("bot.msg.reply.default", locale=user_config.lang)
         )
+
+
+async def bot_reply_if_enabled(
+    client: Client,
+    message: pyrogram.types.Message,
+    chat_config: ChatConfig | None = None,
+):
+    """Send a legacy word reply only when its independent group toggle is on."""
+    chat = message.chat
+    if not chat or chat.type not in (
+        pyrogram.enums.ChatType.GROUP,
+        pyrogram.enums.ChatType.SUPERGROUP,
+    ):
+        return
+    if chat_config is None:
+        chat_config = await database.get_chat_config(chat)
+    if not chat_config.bot_reply:
+        return
+    await word_reply(client, message)
 
 
 async def _base_filter_func(_, __, message: pyrogram.types.Message) -> bool:
@@ -155,7 +175,7 @@ _chat_command_filter = filters.command("chat") & _not_bottle_reply_filter
 
 @Client.on_message((_filter | _chat_command_filter) & _agent_disabled_filter, group=0)
 async def wake_simple_reply(client: Client, message: pyrogram.types.Message):
-    return await word_reply(client, message)
+    return await bot_reply_if_enabled(client, message)
 
 
-__all__ = ["word_reply", "wake_simple_reply"]
+__all__ = ["bot_reply_if_enabled", "word_reply", "wake_simple_reply"]
