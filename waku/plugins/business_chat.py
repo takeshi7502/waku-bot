@@ -1,16 +1,16 @@
-"""Minimal text chat for Telegram Business connections."""
+"""Chat through Telegram Business connections using the normal bot output path."""
 
 import asyncio
 import weakref
 
 from pydantic_ai import Agent
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
 from pyrogram.types import BusinessConnection, Message
 
 from waku.common.memory_store import memttlcache
 from waku.config import app_config
 from waku.logger import logger
+from waku.plugins.agent.output import StreamingOutput, reply_output
 
 
 _chat_locks: weakref.WeakValueDictionary[tuple[str, int], asyncio.Lock] = (
@@ -18,7 +18,6 @@ _chat_locks: weakref.WeakValueDictionary[tuple[str, int], asyncio.Lock] = (
 )
 _connection_permissions: dict[str, tuple[bool, int | None]] = {}
 _HISTORY_LIMIT = 20
-_MESSAGE_LIMIT = 4096
 
 
 def _should_reply(message: Message) -> bool:
@@ -95,36 +94,59 @@ async def _reply_to_business_message(client: Client, message: Message) -> None:
         history_key = f"business_chat_history:{connection_id}:{chat_id}"
         history = await memttlcache.get(history_key, [])
         timeout = app_config.agent_run_timeout if app_config.agent_run_timeout > 0 else 180
+        streaming_output: StreamingOutput | None = None
         try:
             chat_agent = _make_business_agent()
-            result = await asyncio.wait_for(
-                chat_agent.run(message.text, message_history=history),
-                timeout=timeout,
-            )
-            answer = result.output.strip()
-            if not answer or not app_config.business_chat_enabled:
-                return
-            # Business sends must carry the connection ID so they come from the
-            # connected account, not from the bot's own private chat.
-            for start in range(0, len(answer), _MESSAGE_LIMIT):
-                if not app_config.business_chat_enabled:
+            async with asyncio.timeout(timeout):
+                if app_config.agent_streaming:
+                    streaming_output = StreamingOutput(client, message)
+                    async with chat_agent.run_stream(
+                        message.text, message_history=history
+                    ) as result:
+                        async for delta in result.stream_text(delta=True):
+                            if not app_config.business_chat_enabled:
+                                await streaming_output.abort()
+                                return
+                            await streaming_output.append_delta(delta)
+                        answer = (await result.get_output()).strip()
+                        next_history = result.all_messages()[-_HISTORY_LIMIT:]
+                    if not app_config.business_chat_enabled:
+                        await streaming_output.abort()
+                        return
+                    if answer:
+                        streaming_output.current_text = answer
+                        await streaming_output.finalize()
+                    else:
+                        await streaming_output.abort()
+                else:
+                    result = await chat_agent.run(
+                        message.text, message_history=history
+                    )
+                    answer = result.output.strip()
+                    if not answer or not app_config.business_chat_enabled:
+                        return
+                    await reply_output(client, message, answer)
+                    next_history = result.all_messages()[-_HISTORY_LIMIT:]
+                if not answer or not app_config.business_chat_enabled:
                     return
-                await client.send_message(
-                    chat_id=chat_id,
-                    text=answer[start : start + _MESSAGE_LIMIT],
-                    business_connection_id=connection_id,
-                    parse_mode=ParseMode.DISABLED,
-                )
             await memttlcache.set(
                 history_key,
-                result.all_messages()[-_HISTORY_LIMIT:],
+                next_history,
                 ttl=app_config.cachettl_agent_history,
             )
         except TimeoutError:
+            if streaming_output is not None:
+                await streaming_output.abort()
             logger.warning(
                 f"Telegram Business chat timed out for connection {connection_id}, chat {chat_id}"
             )
+        except asyncio.CancelledError:
+            if streaming_output is not None:
+                await streaming_output.abort()
+            raise
         except Exception:
+            if streaming_output is not None:
+                await streaming_output.abort()
             logger.exception(
                 f"Telegram Business chat failed for connection {connection_id}, chat {chat_id}"
             )

@@ -21,7 +21,7 @@ _MD_SEPARATOR_RE = re.compile(r"^(?:[-*_][ \t]*){3,}$")
 
 TELEGRAM_SAFE_MESSAGE_LENGTH = 4096
 TELEGRAM_RICH_MESSAGE_LENGTH = 8192
-_OFFICIAL_DRAFT_UNSUPPORTED_PEERS: set[int] = set()
+_OFFICIAL_DRAFT_UNSUPPORTED_PEERS: set[tuple[str | None, int]] = set()
 
 
 def _split_text_for_telegram(text: str, limit: int = TELEGRAM_SAFE_MESSAGE_LENGTH) -> list[str]:
@@ -166,7 +166,9 @@ class OfficialRichDraftStreamer:
         chat = self.message.chat
         if chat is None or not self.current_text.strip():
             return False
-        if chat.id in _OFFICIAL_DRAFT_UNSUPPORTED_PEERS:
+        business_connection_id = getattr(self.message, "business_connection_id", None)
+        peer_key = (business_connection_id, chat.id)
+        if peer_key in _OFFICIAL_DRAFT_UNSUPPORTED_PEERS:
             self.supported = False
             return False
         try:
@@ -182,14 +184,15 @@ class OfficialRichDraftStreamer:
                     peer=peer,
                     action=action,
                     top_msg_id=getattr(self.message, "message_thread_id", None),
-                )
+                ),
+                business_connection_id=business_connection_id,
             )
             self.supported = True
             return True
         except Exception as e:
             self.supported = False
             if e.__class__.__name__ == "TextdraftPeerInvalid":
-                _OFFICIAL_DRAFT_UNSUPPORTED_PEERS.add(chat.id)
+                _OFFICIAL_DRAFT_UNSUPPORTED_PEERS.add(peer_key)
             logger.debug(
                 "Official rich draft streaming unavailable; falling back to "
                 f"message edits: {e.__class__.__name__} - {e}"
@@ -349,10 +352,20 @@ class StreamingOutput:
         try:
             # During streaming, send plain text without entities to avoid
             # rendering partially-formed markdown. Entities applied at finalize.
-            await self.reply_message.edit_text(
-                text[: self.MAX_PREVIEW_LENGTH],
+            chat = self.reply_message.chat
+            if chat is None:
+                return
+            self.reply_message = await self.client.edit_message_text(
+                chat_id=chat.id,
+                message_id=self.reply_message.id,
+                text=text[: self.MAX_PREVIEW_LENGTH],
                 parse_mode=pyrogram.enums.ParseMode.DISABLED,
+                business_connection_id=getattr(self.message, "business_connection_id", None),
             )
+            if self.reply_message is not None:
+                self.reply_message.business_connection_id = getattr(
+                    self.message, "business_connection_id", None
+                )
             self._last_sent_text = text
             self.last_edit_time = asyncio.get_event_loop().time()
             self.edit_count += 1
@@ -372,6 +385,10 @@ class StreamingOutput:
                 plain[: self.MAX_PREVIEW_LENGTH],
                 entities=entities if len(plain) <= self.MAX_PREVIEW_LENGTH else None,
             )
+            if self.reply_message is not None:
+                self.reply_message.business_connection_id = getattr(
+                    self.message, "business_connection_id", None
+                )
         except Exception as e:
             logger.error(f"Send failed in streaming: {e}")
             raise
