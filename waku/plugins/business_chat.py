@@ -90,6 +90,8 @@ async def _reply_to_business_message(client: Client, message: Message) -> None:
         lock = _chat_locks[lock_key] = asyncio.Lock()
 
     async with lock:
+        if not _should_reply(message):
+            return
         history_key = f"business_chat_history:{connection_id}:{chat_id}"
         history = await memttlcache.get(history_key, [])
         timeout = app_config.agent_run_timeout if app_config.agent_run_timeout > 0 else 180
@@ -100,11 +102,13 @@ async def _reply_to_business_message(client: Client, message: Message) -> None:
                 timeout=timeout,
             )
             answer = result.output.strip()
-            if not answer:
+            if not answer or not app_config.business_chat_enabled:
                 return
             # Business sends must carry the connection ID so they come from the
             # connected account, not from the bot's own private chat.
             for start in range(0, len(answer), _MESSAGE_LIMIT):
+                if not app_config.business_chat_enabled:
+                    return
                 await client.send_message(
                     chat_id=chat_id,
                     text=answer[start : start + _MESSAGE_LIMIT],

@@ -101,6 +101,38 @@ async def test_business_chat_requires_reply_permission(monkeypatch):
     client.send_message.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_disabling_business_during_model_run_suppresses_reply(monkeypatch):
+    monkeypatch.setattr(business_chat.app_config, "business_chat_enabled", True)
+    monkeypatch.setattr(business_chat.app_config, "agent", True)
+    monkeypatch.setattr(business_chat.app_config, "agent_model", "test/model")
+    business_chat._connection_permissions.clear()
+    connection = SimpleNamespace(
+        id="connection-a",
+        is_enabled=True,
+        rights=SimpleNamespace(can_reply=True),
+        user=SimpleNamespace(id=456),
+    )
+
+    async def finish_after_disable(*args, **kwargs):
+        business_chat.app_config.business_chat_enabled = False
+        return SimpleNamespace(output="A reply that must not be sent")
+
+    monkeypatch.setattr(
+        business_chat,
+        "_make_business_agent",
+        lambda: SimpleNamespace(run=finish_after_disable),
+    )
+    client = SimpleNamespace(
+        send_message=AsyncMock(),
+        get_business_connection=AsyncMock(return_value=connection),
+    )
+
+    await business_chat._reply_to_business_message(client, _message())
+
+    client.send_message.assert_not_awaited()
+
+
 def test_business_switch_is_available_for_existing_settings(monkeypatch, tmp_path):
     settings_path = tmp_path / "settings.toml"
     settings_path.write_text('agent = true\n[agent_providers.default]\nkey = "example"\n', encoding="utf-8")
@@ -120,3 +152,22 @@ def test_business_switch_is_available_for_existing_settings(monkeypatch, tmp_pat
         ["business_chat_enabled"]
     ]
     assert entries["business_chat_enabled"].value is True
+
+
+def test_business_switch_takes_effect_without_reload(monkeypatch, tmp_path):
+    settings_path = tmp_path / "settings.toml"
+    settings_path.write_text('agent = true\n', encoding="utf-8")
+    monkeypatch.setattr(version, "_SETTINGS_PATH", settings_path)
+    monkeypatch.setattr(version.app_config, "business_chat_enabled", False)
+    version._DIRTY_KEYS.clear()
+
+    _, entries, _ = version._parse_settings()
+    assert version._toggle_entry(entries["business_chat_enabled"], 123) is True
+    assert business_chat.app_config.business_chat_enabled is True
+    assert not version._is_dirty(123)
+    assert tomllib.loads(settings_path.read_text(encoding="utf-8"))["business_chat_enabled"] is True
+
+    _, entries, _ = version._parse_settings()
+    assert version._toggle_entry(entries["business_chat_enabled"], 123) is True
+    assert business_chat.app_config.business_chat_enabled is False
+    assert not version._is_dirty(123)

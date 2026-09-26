@@ -608,6 +608,17 @@ def _write_entry(entry: ConfigEntry, value: Any) -> None:
     _SETTINGS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _toggle_entry(entry: ConfigEntry, owner_id: int) -> bool:
+    """Persist a boolean toggle; return whether it is active without reload."""
+    value = not entry.value
+    _write_entry(entry, value)
+    if entry.full_key == "business_chat_enabled":
+        app_config.business_chat_enabled = value
+        return True
+    _mark_dirty(owner_id, entry.full_key)
+    return False
+
+
 def _delete_provider(provider: str) -> None:
     lines = _settings_text().splitlines()
     table_header = f"[agent_providers.{provider}]"
@@ -845,10 +856,17 @@ async def config_callback(client: pyrogram.Client, query: pyrogram.types.Callbac
             if not isinstance(entry.value, bool):
                 await query.answer("Biến này không phải boolean.", show_alert=True)
                 return
-            _write_entry(entry, not entry.value)
-            _mark_dirty(owner_id, entry.full_key)
+            applied_now = _toggle_entry(entry, owner_id)
             text, markup = _group_markup(owner_id, group_id, page)
-            await query.answer("Đã đổi, bấm 🔄 ở Config Variables để áp dụng.")
+            if applied_now and app_config.business_chat_enabled and not (
+                app_config.agent and app_config.agent_model
+            ):
+                notice = "Đã bật Business, nhưng cần bật agent và cấu hình agent_model để chat."
+            elif applied_now:
+                notice = "Đã áp dụng ngay, không cần restart."
+            else:
+                notice = "Đã đổi, bấm 🔄 ở Config Variables để áp dụng."
+            await query.answer(notice)
             await _edit_menu(query.message, text, markup)
             return
         if action == "view":
