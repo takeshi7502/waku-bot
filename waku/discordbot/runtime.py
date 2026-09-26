@@ -1,38 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import io
-import random
-import re
-from collections import Counter
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from hashlib import md5
 
 import discord
-import httpx
-import pydantic_ai
-from ddgs import DDGS
-from pydantic_ai import Agent, BinaryContent, ModelRetry, RunContext, Tool, UserContent
-from pydantic_ai.messages import (
-    MULTI_MODAL_CONTENT_TYPES,
-    ModelMessage,
-    ModelRequest,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai import Agent, RunContext, Tool
 
-from waku import common
 from waku.config import app_config
-from waku.i18n import i18n
 from waku.logger import logger
 from waku.plugins.agent import provider
-from waku.plugins.agent.history import filter_empty_model_responses
-from waku.services import manyacg as manyacg_service
-from waku.services.manyacg import manyacg_client
 
 from . import state
-from .constants import *  # noqa: F403
 from .client import _create_client
 from .models import DiscordContextDeps
 from .scheduling import cancel_discord_scheduled_message, list_discord_scheduled_messages, schedule_discord_image_action, schedule_discord_message
@@ -43,7 +20,18 @@ from .tools.search import search_discord_group_memory, search_discord_messages, 
 from .tools.server import find_discord_channel, get_discord_server_info
 from .tools.users import find_discord_user, mention_discord_user
 
+
+def _discord_persona_prompt(message: discord.Message) -> str:
+    if message.guild is not None and app_config.agent_group_prompt:
+        return app_config.agent_group_prompt
+    return app_config.agent_prompt
+
 async def start_discord_bot() -> None:
+    if state.discord_task is not None and not state.discord_task.done():
+        logger.debug("Discord AI chat is already running or connecting")
+        return
+    if state.discord_task is not None or state.discord_client is not None:
+        await stop_discord_bot()
 
     if not app_config.discord_enabled:
         logger.debug("Discord AI chat disabled")
@@ -91,7 +79,7 @@ async def start_discord_bot() -> None:
         lang_instruction = f"Default response language: {lang_str}. Always reply in {lang_str} first unless the user explicitly requests another language."
 
         return (
-            f"{app_config.agent_group_prompt or app_config.agent_prompt}\n\n"
+            f"{_discord_persona_prompt(message)}\n\n"
             "Discord style: keep Waku's cute, playful chat style. "
             "Use natural emojis/emoticons in most casual replies, usually 1-3, "
             "but do not spam them or add them to serious/admin/error messages. "
@@ -144,7 +132,7 @@ async def start_discord_bot() -> None:
             "person to tag or credit unless explicitly requested. Bot admins may ask "
             "to see every existing schedule; then call list_discord_scheduled_messages "
             "with include_all=True. For repeating/cross-channel/@everyone scheduling, "
-            "first and let the backend permission check decide; do not pre-refuse "
+            "call the tool first and let the backend permission check decide; do not pre-refuse "
             "before calling the tool. If the tool returns an admin-only/permission "
             "failure, then explain that limitation briefly. When scheduling/tagging "
             "someone in another channel, never reveal who created/requested the job "
@@ -182,7 +170,20 @@ async def start_discord_bot() -> None:
     )
     state.discord_client = _create_client()
     state.discord_task = asyncio.create_task(state.discord_client.start(app_config.discord_token))
+    state.discord_task.add_done_callback(_log_discord_task_result)
     logger.info("Discord AI chat startup scheduled")
+
+
+def _log_discord_task_result(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        error = task.exception()
+    except Exception as error:
+        logger.warning(f"Could not inspect Discord task result: {error}")
+        return
+    if error is not None:
+        logger.error(f"Discord client stopped unexpectedly: {error.__class__.__name__}: {error}")
 
 
 def get_discord_runtime_status() -> str:
@@ -198,16 +199,28 @@ def get_discord_runtime_status() -> str:
 
 
 async def stop_discord_bot() -> None:
-
-    if state.discord_client is not None:
-        await state.discord_client.close()
-    if state.discord_task is not None:
-        try:
-            await state.discord_task
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning(f"Discord client stopped with error: {e.__class__.__name__}: {e}")
-    state.discord_task = None
-    state.discord_client = None
-    state.discord_agent = None
+    client = state.discord_client
+    task = state.discord_task
+    try:
+        if client is not None:
+            try:
+                await asyncio.wait_for(client.close(), timeout=10)
+            except TimeoutError:
+                logger.warning("Discord client close timed out; cancelling startup task")
+            except Exception as e:
+                logger.warning(f"Discord client close failed: {e.__class__.__name__}: {e}")
+        if task is not None:
+            try:
+                await asyncio.wait_for(task, timeout=10)
+            except TimeoutError:
+                logger.warning("Discord client did not stop within 10 seconds; cancelling task")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Discord client stopped with error: {e.__class__.__name__}: {e}")
+    finally:
+        state.discord_task = None
+        state.discord_client = None
+        state.discord_agent = None
+        state.discord_recovery_agent = None
+        state.server_list_view_registered = False

@@ -8,6 +8,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import md5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import discord
 import httpx
@@ -129,6 +130,15 @@ def _is_reply_to_bot(message: discord.Message, bot_user: discord.ClientUser) -> 
         return cached.author.id == bot_user.id
     return False
 
+
+def _discord_current_time() -> str:
+    try:
+        timezone = ZoneInfo(app_config.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        timezone = UTC
+    return datetime.now(timezone).isoformat(timespec="seconds")
+
+
 async def _should_wake(message: discord.Message, bot_user: discord.ClientUser) -> tuple[bool, str]:
     if message.author.bot:
         return False, ""
@@ -194,13 +204,14 @@ async def _resolve_discord_channel(
     if channel_id is None:
         return message.channel
     guild = message.guild
+    if guild is None:
+        return message.channel if channel_id == message.channel.id else None
     channel = None
-    if guild is not None:
-        get_channel_or_thread = getattr(guild, "get_channel_or_thread", None)
-        if callable(get_channel_or_thread):
-            channel = get_channel_or_thread(channel_id)
-        if channel is None:
-            channel = guild.get_channel(channel_id) or guild.get_thread(channel_id)
+    get_channel_or_thread = getattr(guild, "get_channel_or_thread", None)
+    if callable(get_channel_or_thread):
+        channel = get_channel_or_thread(channel_id)
+    if channel is None:
+        channel = guild.get_channel(channel_id) or guild.get_thread(channel_id)
     if channel is None and state.discord_client is not None:
         channel = state.discord_client.get_channel(channel_id)
     if channel is None and state.discord_client is not None:
@@ -208,7 +219,10 @@ async def _resolve_discord_channel(
             channel = await state.discord_client.fetch_channel(channel_id)
         except Exception as e:
             logger.debug(f"Discord fetch_channel failed for {channel_id}: {e}")
-    return channel
+    # A model-supplied channel ID must never let a guild chat inspect or post
+    # in another server the bot happens to share with this user.
+    channel_guild = getattr(channel, "guild", None)
+    return channel if getattr(channel_guild, "id", None) == guild.id else None
 
 async def _reply_context(message: discord.Message) -> str | None:
     ref = message.reference
@@ -225,12 +239,36 @@ async def _reply_context(message: discord.Message) -> str | None:
     return None
 
 async def _build_prompt(message: discord.Message, user_prompt: str) -> tuple[list[UserContent], bool]:
+    """Bound media preparation so one stalled attachment cannot hang a chat turn."""
+    configured_timeout = app_config.agent_download_timeout
+    timeout = configured_timeout if configured_timeout > 0 else 30
+    try:
+        return await asyncio.wait_for(_build_prompt_impl(message, user_prompt), timeout)
+    except TimeoutError:
+        logger.warning(
+            "Discord prompt media preparation timed out: "
+            f"user={message.author.id} channel={message.channel.id} after={timeout}s"
+        )
+        text = (
+            "ContextInfo[Discord chat]\n"
+            f"Server: {_guild_name(message)}\n"
+            f"Channel: {_channel_name(message)}\n"
+            f"User: {_author_name(message)} (id={message.author.id})\n"
+            f"Current time: {_discord_current_time()}\n"
+            "Media preparation timed out; attachments and stickers are unavailable. "
+            "Do not claim to have seen or analyzed them.\n"
+            f"User message:\n{user_prompt or '[No text message]'}"
+        )
+        return [text], False
+
+
+async def _build_prompt_impl(message: discord.Message, user_prompt: str) -> tuple[list[UserContent], bool]:
     parts = [
         "ContextInfo[Discord chat]",
         f"Server: {_guild_name(message)}",
         f"Channel: {_channel_name(message)}",
         f"User: {_author_name(message)} (id={message.author.id})",
-        f"Current time: {datetime.now().isoformat(timespec='seconds')}",
+        f"Current time: {_discord_current_time()}",
     ]
     reply_ctx = await _reply_context(message)
     replied = message.reference.resolved if message.reference else None
@@ -297,24 +335,46 @@ async def _build_prompt(message: discord.Message, user_prompt: str) -> tuple[lis
     return contents, needs_multimodal
 
 def _split_reply(text: str) -> list[str]:
-    chunks = [chunk.strip() for chunk in text.split("\n\n") if chunk.strip()]
-    if not chunks:
+    remaining = text.strip()
+    if not remaining:
         return []
+    chunks: list[str] = []
+    fence_language: str | None = None
+    while remaining:
+        prefix = f"```{fence_language}\n" if fence_language is not None else ""
+        if len(prefix) + len(remaining) <= 1900:
+            chunks.append(prefix + remaining)
+            break
 
-    max_messages = DISCORD_REPLY_MAX_MESSAGES
-    if len(chunks) <= max_messages:
-        return chunks
+        # Leave room to close an unfinished code block at the message edge.
+        limit = 1900 - len(prefix) - 5
+        split_at = remaining.rfind("\n\n", 0, limit + 1)
+        if split_at < limit // 2:
+            split_at = remaining.rfind("\n", 0, limit + 1)
+        if split_at < limit // 2:
+            split_at = remaining.rfind(" ", 0, limit + 1)
+        if split_at < limit // 2:
+            split_at = limit
 
-    grouped: list[str] = []
-    total = len(chunks)
-    base = total // max_messages
-    remainder = total % max_messages
-    index = 0
-    for i in range(max_messages):
-        size = base + (1 if i < remainder else 0)
-        grouped.append("\n\n".join(chunks[index : index + size]))
-        index += size
-    return grouped
+        fragment = remaining[:split_at]
+        for match in re.finditer(r"(?m)^```([^\n`]*)", fragment):
+            fence_language = match.group(1).strip()[:32] if fence_language is None else None
+        suffix = "\n```" if fence_language is not None else ""
+        chunks.append(prefix + fragment.rstrip() + suffix)
+        remaining = remaining[split_at:]
+        remaining = remaining.lstrip("\n") if fence_language is not None else remaining.lstrip()
+
+    if len(chunks) > DISCORD_REPLY_MAX_MESSAGES:
+        chunks = chunks[:DISCORD_REPLY_MAX_MESSAGES]
+        suffix = "\n\n… (phần còn lại quá dài nên đã lược bớt)"
+        closing_fence = "\n```" if chunks[-1].endswith("\n```") else ""
+        last_body = chunks[-1][: -len(closing_fence)] if closing_fence else chunks[-1]
+        chunks[-1] = (
+            last_body[: 1900 - len(suffix) - len(closing_fence)].rstrip()
+            + closing_fence
+            + suffix
+        )
+    return chunks
 
 async def _send_reply(message: discord.Message, text: str) -> None:
     chunks = _split_reply(text)
@@ -323,12 +383,13 @@ async def _send_reply(message: discord.Message, text: str) -> None:
     delay_min = DISCORD_REPLY_DELAY_MIN
     delay_max = DISCORD_REPLY_DELAY_MAX
     for index, chunk in enumerate(chunks):
-        if len(chunk) > 1900:
-            chunk = chunk[:1900] + "…"
         await message.channel.send(
             chunk,
             reference=message if index == 0 else None,
             mention_author=False,
+            allowed_mentions=discord.AllowedMentions(
+                users=True, roles=False, everyone=False, replied_user=False
+            ),
         )
         if index < len(chunks) - 1:
             await asyncio.sleep(random.uniform(delay_min, delay_max) + len(chunk) / 900)

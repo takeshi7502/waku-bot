@@ -118,10 +118,14 @@ def _channel_permissions(channel: object, guild: discord.Guild | None) -> discor
 
 def _can_view_channel(channel: object, guild: discord.Guild | None) -> bool:
     permissions = _channel_permissions(channel, guild)
+    if guild is not None and permissions is None:
+        return False
     return permissions is None or permissions.view_channel
 
 def _can_read_message_history(channel: object, guild: discord.Guild | None) -> bool:
     permissions = _channel_permissions(channel, guild)
+    if guild is not None and permissions is None:
+        return False
     return permissions is None or (
         permissions.view_channel and permissions.read_message_history
     )

@@ -63,25 +63,31 @@ def _build_discord_server_list_embed(rows: list[tuple[int, dict]]) -> discord.Em
     if not rows:
         embed.description = "No authorized Discord servers."
         embed.color = 0x64748B
+    shown = 0
     for guild_id, config in rows[:25]:
         guild = state.discord_client.get_guild(guild_id) if state.discord_client else None
         joined = guild is not None
         name = guild.name if joined else "Unknown / not currently joined"
-        r18_mode = int(config.get("discord_r18_mode", 2 if config.get("discord_allow_r18", False) else 0))
+        try:
+            r18_mode = int(config.get("discord_r18_mode", 2 if config.get("discord_allow_r18", False) else 0))
+        except (TypeError, ValueError):
+            r18_mode = 0
         ai_reply = bool(config.get("discord_ai_reply", True))
         status = "🟢 Joined" if joined else "⚫ Not joined"
-        embed.add_field(
-            name=f"{'✅' if joined else '❔'} {name}"[:256],
-            value=(
-                f"**Guild ID:** `{guild_id}`\n"
-                f"**Status:** {status}\n"
-                f"**AI Reply:** `{'ON' if ai_reply else 'OFF'}`\n"
-                f"**R18 images:** `{_r18_mode_label(r18_mode)}`"
-            ),
-            inline=False,
+        field_name = f"{'✅' if joined else '❔'} {name}"[:100]
+        field_value = (
+            f"**Guild ID:** `{guild_id}`\n"
+            f"**Status:** {status}\n"
+            f"**AI Reply:** `{'ON' if ai_reply else 'OFF'}`\n"
+            f"**R18 images:** `{_r18_mode_label(bool(config.get('setu_enabled', True)), r18_mode)}`"
         )
-    if len(rows) > 25:
-        embed.set_footer(text=f"Showing first 25 of {len(rows)} servers • Last updated")
+        # Discord limits an entire embed to 6,000 characters, not just each field.
+        if len(embed) + len(field_name) + len(field_value) > 5800:
+            break
+        embed.add_field(name=field_name, value=field_value, inline=False)
+        shown += 1
+    if shown < len(rows):
+        embed.set_footer(text=f"Showing first {shown} of {len(rows)} servers • Last updated")
     else:
         embed.set_footer(text="Last updated")
     return embed

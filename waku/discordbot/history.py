@@ -143,36 +143,42 @@ async def _record_discord_group_memory(message: discord.Message) -> None:
             created_at=message.created_at or datetime.now(UTC),
         )
     )
-    if len(group_messages) > _DISCORD_GROUP_MEMORY_BATCH_SIZE:
+    if len(group_messages) >= _DISCORD_GROUP_MEMORY_BATCH_SIZE:
         group_messages = group_messages[-_DISCORD_GROUP_MEMORY_BATCH_SIZE:]
         update_key = _discord_group_memory_update_key(guild.id)
-        if not await common.memttlcache.get(update_key):
-            await common.memttlcache.set(update_key, True, ttl=3600)
+        retry_key = f"{update_key}:retry"
+        if not await common.memttlcache.get(update_key) and not await common.memttlcache.get(retry_key):
             memory_text = "Discord server message log:\n" + "\n".join(
                 f"{item.sender_name}({item.sender_id}) in #{item.channel_id}: {item.text}"
                 for item in group_messages
             )
             try:
-                result = await powermemory.add(
-                    memory_text,
-                    infer=True,
-                    user_id=_discord_group_memory_user_id(guild.id),
-                    prompt=(
-                        "You are Waku's Discord server memory. Extract useful facts, "
-                        "member preferences, relationships, recurring topics, jokes, "
-                        "or notable events worth remembering for this Discord server."
+                result = await asyncio.wait_for(
+                    powermemory.add(
+                        memory_text,
+                        infer=True,
+                        user_id=_discord_group_memory_user_id(guild.id),
+                        prompt=(
+                            "You are Waku's Discord server memory. Extract useful facts, "
+                            "member preferences, relationships, recurring topics, jokes, "
+                            "or notable events worth remembering for this Discord server."
+                        ),
                     ),
+                    timeout=30,
                 )
                 logger.debug(
                     "Discord group memory updated: "
                     f"guild={guild.id} messages={len(group_messages)} result={result}"
                 )
             except Exception as e:
+                await common.memttlcache.set(retry_key, True, ttl=60)
                 logger.error(
                     "Discord group memory update failed: "
                     f"guild={guild.id} error={e.__class__.__name__}: {e}"
                 )
-        group_messages = []
+            else:
+                await common.memttlcache.set(update_key, True, ttl=3600)
+                group_messages = []
     await common.memttlcache.set(
         key,
         group_messages,

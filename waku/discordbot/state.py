@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import weakref
 from typing import Any
 
 import discord
@@ -17,6 +18,9 @@ discord_image_send_lock: asyncio.Lock | None = None
 discord_agent_semaphore: asyncio.Semaphore | None = None
 discord_agent_semaphore_limit = 0
 discord_auth_locks: dict[int, asyncio.Lock] = {}
+discord_turn_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
 
 
 def _discord_image_lock() -> asyncio.Lock:
@@ -39,6 +43,13 @@ def _discord_auth_lock(guild_id: int) -> asyncio.Lock:
     if lock is None:
         lock = asyncio.Lock()
         discord_auth_locks[guild_id] = lock
+    return lock
+
+
+def _discord_turn_lock(user_id: int) -> asyncio.Lock:
+    lock = discord_turn_locks.get(user_id)
+    if lock is None:
+        lock = discord_turn_locks[user_id] = asyncio.Lock()
     return lock
 
 

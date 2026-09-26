@@ -35,6 +35,7 @@ from .. import state
 from ..constants import *  # noqa: F403
 from ..embeds import discord_command_embed
 from ..models import DiscordGuildSettings
+from ..permissions import _is_discord_user_bot_admin
 from ..settings import _discord_dm_settings, _discord_guild_settings, _r18_mode_label, _rotate_discord_history_epoch, _set_discord_dm_settings, _set_discord_guild_settings
 
 class DiscordConfigView(discord.ui.View):
@@ -50,6 +51,31 @@ class DiscordConfigView(discord.ui.View):
             setu_enabled=settings.setu_enabled,
             lang=settings.lang,
         )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        guild = interaction.guild
+        if guild is None or guild.id != self.guild.id:
+            await interaction.response.send_message(
+                "Menu này chỉ dùng được trong server đã mở nó.", ephemeral=True
+            )
+            return False
+        user = interaction.user
+        permissions = getattr(user, "guild_permissions", None)
+        is_server_admin = guild.owner_id == user.id or bool(
+            permissions and permissions.administrator
+        )
+        if not is_server_admin and not _is_discord_user_bot_admin(user):
+            await interaction.response.send_message(
+                "Chỉ admin server mới có thể thay đổi cấu hình Waku.", ephemeral=True
+            )
+            return False
+        if not (await _discord_guild_settings(guild)).enabled:
+            await interaction.response.send_message(
+                "Waku chưa được bật cho server này. Hãy mở lại `!config` để xin quyền.",
+                ephemeral=True,
+            )
+            return False
+        return True
 
     async def on_timeout(self) -> None:
         if self.message is None:
@@ -209,6 +235,14 @@ class DiscordDMConfigView(discord.ui.View):
             setu_enabled=settings.setu_enabled,
             lang=settings.lang,
         )
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.guild is not None or interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "Chỉ người mở menu DM này mới có thể thay đổi cấu hình.", ephemeral=True
+            )
+            return False
+        return True
 
     async def on_timeout(self) -> None:
         if self.message is None:

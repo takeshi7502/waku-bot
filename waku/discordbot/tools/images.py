@@ -94,7 +94,14 @@ async def send_discord_web_image(
             color=0x8AC5FF,
         )
         embed.set_image(url=f"attachment://{file.filename}")
-        await message.channel.send(embed=embed, file=file, reference=message)
+        try:
+            await message.channel.send(embed=embed, file=file, reference=message)
+        except discord.HTTPException as e:
+            logger.warning(f"Discord web image upload failed: {e}")
+            return DiscordWebImageResult(
+                success=False,
+                message="Discord could not upload the web image.",
+            )
         return DiscordWebImageResult(
             success=True,
             title=title,
@@ -161,18 +168,28 @@ async def send_discord_anime_photo(
         ]
     target_ids = [user_id for user_id in dict.fromkeys(target_ids) if user_id != bot_user_id]
     mentions = [f"<@{user_id}>" for user_id in target_ids if user_id > 0]
-    caption_has_mention = any(mention in caption_text for mention in mentions)
+    mention_prefix = " ".join(mention for mention in mentions if mention not in caption_text)
     message_content = None
     embed_caption = caption_text
     has_everyone_mention = "@everyone" in caption_text or "@here" in caption_text
     if mentions and caption_text:
-        message_content = caption_text if caption_has_mention else f"{' '.join(mentions)} {caption_text}"
+        message_content = f"{mention_prefix} {caption_text}".strip()
         embed_caption = ""
     elif has_everyone_mention and caption_text:
         message_content = caption_text
         embed_caption = ""
     elif mentions:
         message_content = " ".join(mentions)
+    if message_content and len(message_content) > 2000:
+        return DiscordAnimePhotoResult(
+            success=False,
+            message="Image caption including mentions exceeds Discord's 2000-character limit.",
+        )
+    if len(embed_caption) > 4096:
+        return DiscordAnimePhotoResult(
+            success=False,
+            message="Image caption exceeds Discord's 4096-character embed limit.",
+        )
 
     r18_mode = await _discord_r18_mode(message.guild)
     if r18_mode == 0 and _contains_r18_keyword(keyword):
@@ -241,16 +258,21 @@ async def send_discord_anime_photo(
                 f"user={message.author.id} channel={target_channel_actual_id} "
                 f"title={artwork.title!r} index={index + 1}/{capped_count}"
             )
-            if not await _send_discord_anime_photo_card(
-                message,
-                artwork,
-                picture,
-                channel=target_channel,
-                content=message_content,
-                caption=embed_caption,
-                allowed_mentions=_discord_allowed_mentions(allow_everyone),
-                reference=message if target_channel_actual_id == message.channel.id and index == 0 else None,
-            ):
+            try:
+                sent = await _send_discord_anime_photo_card(
+                    message,
+                    artwork,
+                    picture,
+                    channel=target_channel,
+                    content=message_content,
+                    caption=embed_caption,
+                    allowed_mentions=_discord_allowed_mentions(allow_everyone),
+                    reference=message if target_channel_actual_id == message.channel.id and index == 0 else None,
+                )
+            except discord.HTTPException as e:
+                logger.warning(f"Discord anime image upload failed: {e}")
+                sent = False
+            if not sent:
                 logger.warning(
                     "discord_image_send_failed "
                     f"user={message.author.id} channel={target_channel_actual_id} "

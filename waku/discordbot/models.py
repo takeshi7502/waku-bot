@@ -1,38 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-import io
-import random
-import re
-from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from hashlib import md5
+from datetime import datetime
 
 import discord
-import httpx
-import pydantic_ai
-from ddgs import DDGS
-from pydantic_ai import Agent, BinaryContent, ModelRetry, RunContext, Tool, UserContent
-from pydantic_ai.messages import (
-    MULTI_MODAL_CONTENT_TYPES,
-    ModelMessage,
-    ModelRequest,
-    ToolReturnPart,
-    UserPromptPart,
-)
-
-from waku import common
-from waku.config import app_config
-from waku.i18n import i18n
-from waku.logger import logger
-from waku.plugins.agent import provider
-from waku.plugins.agent.history import filter_empty_model_responses
-from waku.services import manyacg as manyacg_service
-from waku.services.manyacg import manyacg_client
-
-from . import state
-from .constants import *  # noqa: F403
 
 
 @dataclass

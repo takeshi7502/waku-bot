@@ -1,39 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import random
-import re
-from collections import Counter
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from hashlib import md5
 
 import discord
-import httpx
-import pydantic_ai
-from ddgs import DDGS
-from pydantic_ai import Agent, BinaryContent, ModelRetry, RunContext, Tool, UserContent
-from pydantic_ai.messages import (
-    MULTI_MODAL_CONTENT_TYPES,
-    ModelMessage,
-    ModelRequest,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import ModelMessage
 
 from waku import common
 from waku.config import app_config
-from waku.i18n import i18n
 from waku.logger import logger
 from waku.plugins.agent import provider
-from waku.plugins.agent.history import filter_empty_model_responses
-from waku.services import manyacg as manyacg_service
-from waku.services.manyacg import manyacg_client
 
 from . import state
 from .constants import *  # noqa: F403
-from .agent import _discord_recovery_reply, _is_discord_history_error, _run_discord_agent_once
+from .agent import DiscordPostRunError, _discord_recovery_reply, _is_discord_history_error, _run_discord_agent_once
 from .embeds import discord_command_embed
 from .history import _reaction_counter_key, _sanitize_discord_history, _strip_multimodal_history_for_text_model
 from .media import _find_artwork_url, _send_discord_artwork, _send_discord_seg
@@ -398,9 +378,21 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
         return
 
     waiting_key = _waiting_key(message.author.id)
-    if await common.memstore.get(waiting_key):
+    async with state._discord_turn_lock(message.author.id):
+        already_waiting = bool(await common.memstore.get(waiting_key))
+        if not already_waiting:
+            await common.memstore.set(waiting_key, True)
+    if already_waiting:
         await message.channel.send("Thinking...", reference=message)
         return
+
+    try:
+        await _handle_discord_message_turn(message, user_prompt)
+    finally:
+        await common.memstore.delete(waiting_key)
+
+
+async def _handle_discord_message_turn(message: discord.Message, user_prompt: str) -> None:
 
     history_key = await _history_key(message)
     history: list[ModelMessage] = await common.memttlcache.get(history_key, [])
@@ -430,7 +422,6 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
 
     gate = _discord_agent_gate()
     acquired_gate = False
-    await common.memstore.set(waiting_key, True)
     try:
         try:
             busy_timeout = _discord_agent_busy_timeout()
@@ -457,14 +448,25 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
                 model_override,
             )
             return
+        except DiscordPostRunError as post_run_error:
+            logger.error(
+                "Discord agent completed but reply/cache failed; not retrying tools: "
+                f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                f"user={message.author.id} error={post_run_error}"
+            )
+            return
         except Exception as first_error:
             logger.warning(
                 "Discord agent first attempt failed: "
                 f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
                 f"user={message.author.id} error={first_error.__class__.__name__}: {first_error}"
             )
-            if _is_discord_history_error(first_error):
-                await common.memttlcache.delete(history_key)
+            if not _is_discord_history_error(first_error):
+                reply = await _discord_recovery_reply(message, user_prompt, first_error)
+                await message.channel.send(reply, reference=message)
+                return
+
+            await common.memttlcache.delete(history_key)
 
             retry_prompt = list(prompt)
             retry_prompt.append(
@@ -486,6 +488,13 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
                     f"user={message.author.id}"
                 )
                 return
+            except DiscordPostRunError as post_run_error:
+                logger.error(
+                    "Discord retry completed but reply/cache failed; not retrying tools: "
+                    f"guild={_guild_name(message)!r} channel={_channel_name(message)!r} "
+                    f"user={message.author.id} error={post_run_error}"
+                )
+                return
             except Exception as retry_error:
                 logger.error(
                     "Discord agent retry failed: "
@@ -499,4 +508,3 @@ async def _handle_message(message: discord.Message, user_prompt: str) -> None:
     finally:
         if acquired_gate:
             gate.release()
-        await common.memstore.delete(waiting_key)

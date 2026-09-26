@@ -37,6 +37,15 @@ from .history import _sanitize_discord_history
 from .messages import _send_reply
 from .models import DiscordContextDeps
 
+
+class DiscordPostRunError(RuntimeError):
+    """The model completed, but delivering or storing its result failed.
+
+    Retrying the agent here could repeat tool side effects (messages, images,
+    reactions or schedules), so callers must not start another model run.
+    """
+
+
 def _discord_model_status_code(error: Exception) -> int | None:
     status = getattr(error, "status_code", None)
     if isinstance(status, int):
@@ -62,19 +71,23 @@ def _is_discord_temporary_model_error(error: Exception) -> bool:
 
 def _is_discord_history_error(error: Exception) -> bool:
     status = _discord_model_status_code(error)
-    if status == 400:
-        return True
+    if status != 400 and not isinstance(error, TypeError):
+        return False
     text = str(error).casefold()
     history_markers = (
-        "tool_call",
-        "tool call",
-        "tool_calls",
+        "tool_call_id",
+        "tool call id",
         "tool response",
-        "messages",
+        "tool result",
+        "message history",
+        "previous message",
+        "role 'tool'",
+        'role "tool"',
+        "messages[",
         "image_url",
         "content and tool_calls",
     )
-    return isinstance(error, TypeError) or any(marker in text for marker in history_markers)
+    return any(marker in text for marker in history_markers)
 
 def _discord_fallback_reply(error: Exception) -> str:
     if _is_discord_temporary_model_error(error):
@@ -91,20 +104,35 @@ async def _run_discord_agent_once(
     model_override,
 ) -> None:
     assert state.discord_agent is not None
-    async with message.channel.typing():
-        result = await state.discord_agent.run(
-            user_prompt=prompt,
-            message_history=message_history,
-            deps=DiscordContextDeps(message=message),
-            model=model_override,
+    configured_timeout = app_config.agent_run_timeout
+    timeout = configured_timeout if configured_timeout > 0 else 180
+    if configured_timeout <= 0:
+        logger.warning(
+            "agent_run_timeout must be greater than zero; using the safe 180s fallback"
         )
-    await common.memttlcache.set(
-        history_key,
-        _sanitize_discord_history(result.all_messages()),
-        ttl=app_config.cachettl_agent_history,
-    )
+    async with message.channel.typing():
+        result = await asyncio.wait_for(
+            state.discord_agent.run(
+                user_prompt=prompt,
+                message_history=message_history,
+                deps=DiscordContextDeps(message=message),
+                model=model_override,
+            ),
+            timeout=timeout,
+        )
     if result.output:
-        await _send_reply(message, str(result.output))
+        try:
+            await _send_reply(message, str(result.output))
+        except Exception as error:
+            raise DiscordPostRunError("Discord reply delivery failed") from error
+    try:
+        await common.memttlcache.set(
+            history_key,
+            _sanitize_discord_history(result.all_messages()),
+            ttl=app_config.cachettl_agent_history,
+        )
+    except Exception as error:
+        raise DiscordPostRunError("Discord history persistence failed") from error
 
 async def _discord_recovery_reply(
     message: discord.Message,
@@ -124,9 +152,14 @@ async def _discord_recovery_reply(
             "Không nhắc stack trace, provider, API nội bộ, hay tool.\n"
             f"Tin nhắn user: {user_prompt[:1200]}"
         )
-        result = await state.discord_recovery_agent.run(
-            user_prompt=recovery_prompt,
-            message_history=[],
+        configured_timeout = app_config.agent_small_model_timeout
+        timeout = configured_timeout if configured_timeout > 0 else 10
+        result = await asyncio.wait_for(
+            state.discord_recovery_agent.run(
+                user_prompt=recovery_prompt,
+                message_history=[],
+            ),
+            timeout=timeout,
         )
         text = str(result.output or "").strip()
         return text[:1800] if text else fallback

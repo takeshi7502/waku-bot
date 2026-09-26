@@ -39,6 +39,9 @@ from .settings import _discord_guild_settings, _discord_r18_mode, _r18_mode_labe
 from .state import _discord_image_lock
 from .utilities import _channel_name, _guild_name
 
+_DISCORD_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+_DISCORD_MEDIA_MAX_BYTES = 8 * 1024 * 1024
+
 def _find_artwork_url(content: str) -> str | None:
     for regex in manyacg_service.ARTWORK_ALL_REGEX:
         match = regex.search(content)
@@ -63,19 +66,23 @@ async def _send_discord_media_notice(message: discord.Message, text: str) -> Non
 
 async def _download_discord_media(url: str) -> tuple[bytes, str] | None:
     timeout = httpx.Timeout(12.0, connect=6.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        async with client.stream("GET", url, headers={"User-Agent": "WakuDiscordBot/1.0"}) as response:
-            if response.status_code >= 400:
-                return None
-            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-            if content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
-                return None
-            data = bytearray()
-            async for chunk in response.aiter_bytes():
-                data.extend(chunk)
-                if len(data) > _DISCORD_MEDIA_MAX_BYTES:
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers={"User-Agent": "WakuDiscordBot/1.0"}) as response:
+                if response.status_code >= 400:
                     return None
-            return bytes(data), content_type
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                if content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
+                    return None
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > _DISCORD_MEDIA_MAX_BYTES:
+                        return None
+                return bytes(data), content_type
+    except httpx.HTTPError as e:
+        logger.debug(f"Discord media download failed: {e.__class__.__name__}: {e}")
+        return None
 
 async def _discord_attachment_contents(
     message: discord.Message, label: str = "attachment"
@@ -90,21 +97,31 @@ async def _discord_attachment_contents(
         summaries.append(
             f"- {label}: {attachment.filename} type={content_type or 'unknown'} size={size_kb}KB"
         )
-        if not _discord_media_enabled() or content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
+        if not _discord_media_enabled():
             continue
         if attachment.size and attachment.size > _DISCORD_MEDIA_MAX_BYTES:
             summaries.append(f"  skipped: file is larger than {_DISCORD_MEDIA_MAX_BYTES // 1024 // 1024}MB")
             continue
-        try:
-            data = await attachment.read(use_cached=True)
-        except Exception as e:
-            logger.debug(f"Discord attachment download failed: {e.__class__.__name__}: {e}")
+        # Unknown size/MIME must use the bounded streaming path: Attachment.read
+        # materializes the entire response before we can inspect its size.
+        if not attachment.size or content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
             downloaded = await _download_discord_media(attachment.url)
             if downloaded is None:
                 continue
             data, content_type = downloaded
+        else:
+            try:
+                data = await attachment.read(use_cached=True)
+            except Exception as e:
+                logger.debug(f"Discord attachment download failed: {e.__class__.__name__}: {e}")
+                downloaded = await _download_discord_media(attachment.url)
+                if downloaded is None:
+                    continue
+                data, content_type = downloaded
         if len(data) <= _DISCORD_MEDIA_MAX_BYTES:
             contents.append(BinaryContent(data=data, media_type=content_type))
+        else:
+            summaries.append(f"  skipped: downloaded file is larger than {_DISCORD_MEDIA_MAX_BYTES // 1024 // 1024}MB")
     return summaries, contents
 
 async def _discord_sticker_contents(
@@ -316,24 +333,28 @@ async def _search_web_images(query: str, max_results: int = 8) -> list[dict]:
         with DDGS() as ddgs:
             return list(ddgs.images(query, max_results=max_results, safesearch="moderate"))
 
-    return await asyncio.to_thread(_search)
+    return await asyncio.wait_for(asyncio.to_thread(_search), timeout=20)
 
 async def _download_image_bytes(url: str) -> tuple[bytes, str] | None:
     max_bytes = 8_000_000
     timeout = httpx.Timeout(12.0, connect=6.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        async with client.stream("GET", url, headers={"User-Agent": "WakuDiscordBot/1.0"}) as response:
-            if response.status_code >= 400:
-                return None
-            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-            if content_type not in {"image/jpeg", "image/png", "image/gif", "image/webp"}:
-                return None
-            data = bytearray()
-            async for chunk in response.aiter_bytes():
-                data.extend(chunk)
-                if len(data) > max_bytes:
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            async with client.stream("GET", url, headers={"User-Agent": "WakuDiscordBot/1.0"}) as response:
+                if response.status_code >= 400:
                     return None
-            return bytes(data), content_type
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                if content_type not in _DISCORD_IMAGE_CONTENT_TYPES:
+                    return None
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > max_bytes:
+                        return None
+                return bytes(data), content_type
+    except httpx.HTTPError as e:
+        logger.debug(f"Discord image download failed: {e.__class__.__name__}: {e}")
+        return None
 
 def _image_filename(content_type: str) -> str:
     extension = {
@@ -365,7 +386,6 @@ async def _send_discord_seg(message: discord.Message, keyword: str = "") -> bool
     if await common.memttlcache.get(ratekey, False):
         await _send_discord_media_notice(message, "Please wait a moment before requesting another image.")
         return True
-    await common.memttlcache.set(ratekey, True, ttl=app_config.manyacg_setu_cd)
 
     image_lock = _discord_image_lock()
     if image_lock.locked():
@@ -375,6 +395,7 @@ async def _send_discord_seg(message: discord.Message, keyword: str = "") -> bool
             "Waku đang xử lý ảnh khác, đợi vài giây rồi gọi lại nha.",
         )
         return True
+    await common.memttlcache.set(ratekey, True, ttl=app_config.manyacg_setu_cd)
 
     try:
         r18_mode = await _discord_r18_mode(message.guild)
@@ -455,7 +476,6 @@ async def _send_discord_seg_interaction(
             "Please wait a moment before requesting another image.",
         )
         return
-    await common.memttlcache.set(ratekey, True, ttl=app_config.manyacg_setu_cd)
 
     image_lock = _discord_image_lock()
     if image_lock.locked():
@@ -464,6 +484,7 @@ async def _send_discord_seg_interaction(
             "Waku đang xử lý ảnh khác, đợi vài giây rồi gọi lại nha.",
         )
         return
+    await common.memttlcache.set(ratekey, True, ttl=app_config.manyacg_setu_cd)
 
     request_context = SimpleNamespace(
         guild=guild,

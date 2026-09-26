@@ -73,7 +73,7 @@ async def _discord_guild_settings(guild: discord.Guild | None) -> DiscordGuildSe
     cache_key = _discord_settings_cache_key(guild.id)
     cached = await common.memttlcache.get(cache_key)
     if isinstance(cached, DiscordGuildSettings):
-        return cached
+        return copy.copy(cached)
     try:
         from waku.database.db import AsyncSessionFactory
         from waku.database.models import ChatData
@@ -98,7 +98,7 @@ async def _discord_guild_settings(guild: discord.Guild | None) -> DiscordGuildSe
             settings,
             ttl=_DISCORD_GUILD_SETTINGS_CACHE_TTL,
         )
-        return settings
+        return copy.copy(settings)
     except Exception as e:
         logger.error(f"Failed to load Discord guild settings from DB: {e}")
         return DiscordGuildSettings(enabled=False)
@@ -179,7 +179,18 @@ async def _delete_discord_guild_settings_by_id(guild_id: int) -> None:
     async with AsyncSessionFactory() as session:
         chat = await session.get(ChatData, guild_id)
         if chat is not None:
-            await session.delete(chat)
+            # Disabling Discord must not remove the shared ChatData row (and its
+            # related data). The legacy function name is kept for callers.
+            config = chat.chat_config
+            config.discord_enabled = False
+            config.discord_muted = False
+            config.discord_auth_status = DISCORD_AUTH_STATUS_NONE
+            config.discord_auth_requester_id = None
+            config.discord_auth_channel_id = None
+            config.discord_auth_requested_at = None
+            config.discord_auth_rejection_reason = None
+            config.discord_auth_review_messages = None
+            chat.chat_config = config
             await session.commit()
     await common.memttlcache.delete(f"chat_config:{guild_id}")
     await common.memttlcache.delete(_discord_settings_cache_key(guild_id))
@@ -348,7 +359,8 @@ async def _discord_dm_settings(user: discord.abc.User) -> DiscordGuildSettings:
         )
     except Exception as e:
         logger.error(f"Failed to load Discord DM settings from DB: user={user.id} error={e}")
-        return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=True, group_memory_enabled=False)
+        # A transient DB failure must not re-enable DM AI for a user who disabled it.
+        return DiscordGuildSettings(enabled=True, r18_mode=0, ai_reply=False, group_memory_enabled=False)
 
 async def _set_discord_dm_settings(
     user: discord.abc.User, settings: DiscordGuildSettings
