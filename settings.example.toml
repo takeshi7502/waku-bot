@@ -12,6 +12,10 @@ timezone = "Asia/Ho_Chi_Minh"
 bot_keywords = ["waku"]
 health_check_enabled = true
 
+# Telegram Business: bật Secretary Mode trong BotFather rồi kết nối bot từ tài khoản Business.
+# Khi bật, bot trả lời tin nhắn văn bản thay mặt tài khoản Business bằng agent_model.
+business_chat_enabled = false
+
 # Telegram Mini App / Waku Panel
 # Cần tạo Mini App trong BotFather và đặt webapp_url là URL HTTPS public.
 webapp = true

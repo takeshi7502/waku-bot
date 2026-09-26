@@ -39,6 +39,8 @@ class _AppConfig(pydantic.BaseModel):
     fans_channel: str | int | None = None  # username or chat_id
     nickname: str = "waku"
     bot_keywords: list[str] = []
+    # Allow connected Telegram Business accounts to use the configured chat model.
+    business_chat_enabled: bool = False
 
     # health check server for container monitoring
     health_check_enabled: bool = False

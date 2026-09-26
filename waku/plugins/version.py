@@ -30,6 +30,7 @@ _RESTART_DELAY_SECONDS = 2
 _SKIP_GROUP_NUMBERS = {3, 5}
 _SENSITIVE_PARTS = ("token", "secret", "password", "hash", "api_key", "key", "db_url")
 _FALLBACK_GROUP_RULES = (
+    ("business", "Telegram Business", ("business_chat_",)),
     ("webapp", "Web App", ("webapp", "health_check_")),
     ("discord", "Discord", ("discord_",)),
     ("redis", "Redis", ("redis",)),
@@ -367,6 +368,17 @@ def _parse_settings() -> tuple[list[ConfigGroup], dict[str, ConfigEntry], list[s
                 groups.append(group)
             group.keys.append(full_key)
 
+    # Always keep the switch in its own section, including for legacy numbered
+    # settings and VPS files that do not have this key yet.
+    for group in groups:
+        if "business_chat_enabled" in group.keys:
+            group.keys.remove("business_chat_enabled")
+    if "business_chat_enabled" not in entries:
+        entries["business_chat_enabled"] = ConfigEntry(
+            "business_chat_enabled", "business_chat_enabled", False, -1
+        )
+    groups.append(ConfigGroup("business", "Telegram Business", ["business_chat_enabled"], None))
+
     if providers:
         groups.append(ConfigGroup("providers", "agent_providers", [], None))
     return [group for group in groups if group.keys or group.group_id == "providers"], entries, providers
@@ -577,6 +589,14 @@ def _entry_markup(owner_id: int, key_token: str, group_id: str, page: int) -> In
 
 def _write_entry(entry: ConfigEntry, value: Any) -> None:
     lines = _settings_text().splitlines()
+    if entry.line_index < 0:
+        first_table = next(
+            (index for index, line in enumerate(lines) if re.match(r"^\s*\[[^]]+]", line)),
+            len(lines),
+        )
+        lines.insert(first_table, f"{entry.key} = {_toml_value(value)}")
+        _SETTINGS_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     old_line = lines[entry.line_index]
     prefix = old_line.split("=", 1)[0].rstrip()
     line_end_index = (

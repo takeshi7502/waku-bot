@@ -41,6 +41,7 @@ type = "chat_completions"
         "agent",
         "manyacg",
         "sticker",
+        "business",
         "providers",
     ]
     assert {key for group in groups for key in group.keys} == {
@@ -66,6 +67,7 @@ token = "secret"
     assert [(group.group_id, group.keys) for group in groups] == [
         ("g1", ["lang"]),
         ("g2", ["agent"]),
+        ("business", ["business_chat_enabled"]),
     ]
 
 
@@ -81,7 +83,7 @@ agent_model = "default/model"
 ''',
     )
 
-    assert set(entries) == {"agent_prompt", "agent_model"}
+    assert set(entries) == {"agent_prompt", "agent_model", "business_chat_enabled"}
     assert groups[0].group_id == "agent"
     assert groups[0].keys == ["agent_prompt", "agent_model"]
     assert entries["agent_prompt"].value == 'fake_key = "not a setting"\n'
